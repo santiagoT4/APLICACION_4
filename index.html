@@ -162,12 +162,11 @@
         if (!response.ok) {
           throw new Error('Error HTTP: ' + response.status);
         }
-        return response.text();  // ← LEER COMO TEXTO
+        return response.text();
       })
       .then(text => {
         console.log('📥 Recibido (GET):', text);
         
-        // TRADUCIR DE TEXTO A OBJETO
         let data;
         try {
           data = JSON.parse(text);
@@ -200,21 +199,40 @@
       console.log('📤 Enviando POST:', body);
       
       // ===== PASO 3: ENVIAR POR EL CANAL (TEXTO PLANO) =====
-      // ✅ Usamos 'no-cors' para evitar preflight CORS
-      // ⚠️ Con 'no-cors' NO podemos leer la respuesta, pero evitamos errores CORS
+      // ✅ Usamos 'cors' para poder leer la respuesta
+      // ⚠️ Apps Script debe tener doOptions() para manejar el preflight
       fetch(URL_APPSCRIPT, {
         method: 'POST',
-        mode: 'no-cors',  // ← CAMBIADO: 'no-cors' en lugar de 'cors'
+        mode: 'cors',  // ← CAMBIADO: 'cors' para leer respuesta
         headers: {
           'Content-Type': 'text/plain'  // ← CLAVE: formato neutro
         },
         body: body  // ← Texto plano
       })
-      .then(() => {
-        // ✅ Con 'no-cors', si llegamos aquí, la petición se envió
-        // No podemos leer la respuesta, pero asumimos éxito
-        console.log('📤 POST enviado correctamente (respuesta opaca)');
-        resolve({ success: true, mensaje: 'Petición enviada' });
+      .then(response => {
+        console.log('📡 Status:', response.status);
+        if (!response.ok) {
+          throw new Error('Error HTTP: ' + response.status);
+        }
+        return response.text();  // ← LEER COMO TEXTO
+      })
+      .then(text => {
+        console.log('📥 Recibido (POST):', text);
+        
+        // ===== PASO 4: TRADUCIR DE TEXTO A OBJETO =====
+        let data;
+        try {
+          data = JSON.parse(text);
+        } catch (error) {
+          throw new Error('La respuesta no es JSON válido: ' + text.substring(0, 100));
+        }
+        
+        // ===== PASO 5: VERIFICAR RESPUESTA =====
+        if (data.success) {
+          resolve(data.data);
+        } else {
+          reject(new Error(data.error || 'Error desconocido'));
+        }
       })
       .catch(error => {
         console.error('❌ Error en callAppScriptPOST:', error);
@@ -299,7 +317,6 @@
     },
     hayNuevosDatos: false,
     ultimaActualizacion: null,
-    // Nuevos campos para control de sincronización
     syncInProgress: false,
     ultimaSincronizacion: null,
     pedidosPendientesSync: []
@@ -447,7 +464,6 @@
       const esProvisional = p.numero_factura && typeof p.numero_factura === 'string' && p.numero_factura.includes('Supuesto');
       const tieneError = p.error_sincronizacion === true;
       const syncClass = esProvisional ? 'pedido-pendiente-sync' : 'pedido-sincronizado';
-      const estadoLabel = esProvisional ? '⏳ Pendiente de sincronizar' : tieneError ? '⚠️ Error al sincronizar' : '';
       
       return `
       <div class="bg-white rounded-xl p-4 shadow-sm border ${syncClass}">
@@ -658,30 +674,25 @@
     
     console.log('🔄 Sincronizando datos en segundo plano...');
     
-    // 1. Buscar pedidos pendientes de sincronizar
     const pedidosPendientes = state.pedidos.filter(p => 
       p.es_provisional === true || 
       (p.numero_factura && typeof p.numero_factura === 'string' && p.numero_factura.includes('Supuesto'))
     );
     
     if (pedidosPendientes.length === 0) {
-      // Si no hay pedidos pendientes, solo refrescar datos
-      refreshDataCompleta(true); // true = silencioso
+      refreshDataCompleta(true);
       state.syncInProgress = false;
       return;
     }
     
     console.log(`📦 ${pedidosPendientes.length} pedidos pendientes de sincronizar`);
     
-    // 2. Reintentar sincronizar cada pedido pendiente
     let sincronizados = 0;
     let fallidos = 0;
     
     const promesas = pedidosPendientes.map(pedido => {
-      // Buscar los detalles del pedido
       const detalles = state.detalles_pedido.filter(d => d.id_pedido === pedido.id_pedido);
       
-      // Reconstruir el payload
       const order = {
         fecha: pedido.fecha,
         id_cliente: pedido.id_cliente,
@@ -713,12 +724,15 @@
           numeroProvisional: parseInt(pedido.numero_factura.match(/\d+/)?.[0] || 0)
         })
       })
-      .then(() => {
+      .then((data) => {
         sincronizados++;
         pedido.sincronizado = true;
         pedido.error_sincronizacion = false;
         pedido.es_provisional = false;
-        console.log(`✅ Pedido ${pedido.id_pedido} sincronizado`);
+        if (data && data.numeroFactura) {
+          pedido.numero_factura = data.numeroFactura;
+        }
+        console.log(`✅ Pedido ${pedido.id_pedido} sincronizado`, data);
       })
       .catch(error => {
         fallidos++;
@@ -730,7 +744,6 @@
     
     Promise.all(promesas)
       .then(() => {
-        // Recargar datos frescos después de sincronizar
         refreshDataCompleta(true);
         state.syncInProgress = false;
         console.log(`✅ Sincronización completada: ${sincronizados} exitosos, ${fallidos} fallidos`);
@@ -758,7 +771,6 @@
 
     mostrarToast('🔄 Actualizando datos...', 'info');
 
-    // Guardar snapshot del estado actual
     const cartSnapshot = JSON.parse(JSON.stringify(state.cart));
     const clientSnapshot = state.selectedClient;
     const observacionSnapshot = state.observacion;
@@ -766,7 +778,6 @@
     const showEditOrderModalSnapshot = state.showEditOrderModal;
     const editingOrderSnapshot = state.editingOrder;
 
-    // Preservar pedidos pendientes
     const pedidosPendientes = state.pedidos.filter(p => 
       p.es_provisional === true || 
       (p.numero_factura && typeof p.numero_factura === 'string' && p.numero_factura.includes('Supuesto'))
@@ -776,11 +787,9 @@
       .then(data => {
         let pedidosActualizados = data.pedidos || [];
         
-        // Filtrar pedidos de Google que no estén en pendientes
         const idsPendientes = pedidosPendientes.map(p => p.id_pedido);
         pedidosActualizados = pedidosActualizados.filter(p => !idsPendientes.includes(p.id_pedido));
 
-        // Si está editando un pedido, preservarlo
         if (showEditOrderModalSnapshot && editingOrderSnapshot) {
           const pedidoEnEdicion = editingOrderSnapshot.id_pedido;
           pedidosActualizados = pedidosActualizados.filter(p => p.id_pedido !== pedidoEnEdicion);
@@ -798,10 +807,8 @@
         state.estadisticas = data.estadisticas || [];
         state.configNumeracion = data.configNumeracion || { ultimoNumero: 1000 };
 
-        // Ordenar pedidos
         state.pedidos.sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
 
-        // Validar stock del carrito
         if (cartSnapshot.length > 0) {
           validarStockCarrito();
         }
@@ -840,7 +847,6 @@
       render();
     }
 
-    // Preservar pedidos pendientes
     const pedidosPendientes = state.pedidos.filter(p => 
       p.es_provisional === true || 
       (p.numero_factura && typeof p.numero_factura === 'string' && p.numero_factura.includes('Supuesto'))
@@ -872,7 +878,6 @@
           render();
           mostrarToast('✅ Datos cargados', 'success');
         } else {
-          // Si es silencioso, solo actualizar la UI sin mostrar loading
           actualizarUISelectiva(state.activeTab);
         }
       })
@@ -931,10 +936,13 @@
         numeroProvisional: parseInt(pedido.numero_factura.match(/\d+/)?.[0] || 0)
       })
     })
-    .then(() => {
+    .then((data) => {
       pedido.sincronizado = true;
       pedido.error_sincronizacion = false;
       pedido.es_provisional = false;
+      if (data && data.numeroFactura) {
+        pedido.numero_factura = data.numeroFactura;
+      }
       mostrarToast('✅ Pedido sincronizado correctamente', 'success');
       refreshDataCompleta();
     })
@@ -1356,7 +1364,6 @@
     render();
     setTimeout(() => actualizarBadgeNuevosDatos(), 100);
     
-    // Si es la pestaña de inicio, refrescar datos
     if (tab === 'inicio') {
       refreshDataCompleta(true);
     }
@@ -1829,26 +1836,32 @@
         numeroProvisional: numeroFacturaLocal
       })
     })
-    .then(() => {
+    .then((data) => {
       setButtonLoading('registrarVenta', false);
       
-      // Actualizar el pedido local
+      // Actualizar el pedido local con la respuesta
       const pedidoIndex = state.pedidos.findIndex(p => p.id_pedido === idPedidoTemporal);
       if (pedidoIndex !== -1) {
         state.pedidos[pedidoIndex].es_provisional = false;
         state.pedidos[pedidoIndex].sincronizado = true;
         state.pedidos[pedidoIndex].error_sincronizacion = false;
+        // Si Apps Script devolvió un número de factura, actualizarlo
+        if (data && data.numeroFactura) {
+          state.pedidos[pedidoIndex].numero_factura = data.numeroFactura;
+        }
       }
       
-      mostrarToast(`✅ Factura sincronizada con Google`, 'success');
+      // Mostrar número de factura si vino en la respuesta
+      const numeroFacturaReal = data?.numeroFactura || numeroFacturaLocal;
+      mostrarToast(`✅ Factura #${numeroFacturaReal} sincronizada con Google`, 'success');
       
-      // Recargar datos para obtener el número de factura oficial
+      // Recargar datos para obtener actualizaciones
       refreshDataCompleta(true);
       render();
 
       if (impresoraPreConectada) {
         const datosVenta = {
-          numeroFactura: numeroFacturaLocal,
+          numeroFactura: numeroFacturaReal,
           nombre_cliente: clientName,
           total: cartTotal,
           productos: detallesParaEnviar.map(d => ({
