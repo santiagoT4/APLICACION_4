@@ -1,0 +1,2408 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="theme-color" content="#0f766e">
+  <title>Cotilpez POS</title>
+  
+  <!-- ===== PWA CONFIGURATION ===== -->
+  <link rel="manifest" href="manifest.json">
+  
+  <!-- ===== CDN ===== -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  
+  <style>
+    * { font-family: 'Inter', sans-serif; }
+    .no-scrollbar::-webkit-scrollbar { display: none; }
+    button:active { transform: scale(0.97); transition: transform 0.05s; }
+    button:disabled { opacity: 0.6; transform: none; cursor: not-allowed; }
+    @media print {
+      body * { visibility: hidden; }
+      .print-area, .print-area * { visibility: visible; }
+      .print-area { position: absolute; top: 0; left: 0; width: 100%; }
+    }
+    input, textarea, select {
+      font-size: 16px !important;
+    }
+    .search-dropdown {
+      position: absolute;
+      z-index: 1000;
+      background: white;
+      border: 1px solid #e2e8f0;
+      border-radius: 12px;
+      box-shadow: 0 10px 25px -5px rgba(0,0,0,0.1);
+      max-height: 250px;
+      overflow-y: auto;
+      width: 100%;
+    }
+    .spinner {
+      border: 2px solid #f3f3f3;
+      border-top: 2px solid #0f766e;
+      border-radius: 50%;
+      width: 16px;
+      height: 16px;
+      animation: spin 1s linear infinite;
+      display: inline-block;
+      margin-right: 8px;
+    }
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+    .toast {
+      position: fixed;
+      bottom: 100px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #10b981;
+      color: white;
+      padding: 12px 24px;
+      border-radius: 12px;
+      font-weight: 500;
+      z-index: 1000;
+      animation: slideUp 0.3s ease;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    }
+    .toast.error {
+      background: #ef4444;
+    }
+    .toast.info {
+      background: #3b82f6;
+    }
+    .toast.warning {
+      background: #f59e0b;
+    }
+    @keyframes slideUp {
+      from { opacity: 0; transform: translateX(-50%) translateY(20px); }
+      to { opacity: 1; transform: translateX(-50%) translateY(0); }
+    }
+    .numero-provisional {
+      background: #fef3c7;
+      color: #92400e;
+      font-size: 0.7rem;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-weight: 600;
+      display: inline-block;
+      margin-left: 6px;
+    }
+    .numero-oficial {
+      background: #d1fae5;
+      color: #065f46;
+      font-size: 0.7rem;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-weight: 600;
+      display: inline-block;
+      margin-left: 6px;
+    }
+    .badge-nuevos-datos {
+      background: #f59e0b;
+      color: white;
+      font-size: 0.65rem;
+      padding: 2px 10px;
+      border-radius: 999px;
+      font-weight: 600;
+      animation: pulse-badge 2s infinite;
+      display: inline-block;
+      margin-left: 8px;
+    }
+    @keyframes pulse-badge {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+    .badge-sincronizando {
+      background: #3b82f6;
+      color: white;
+      font-size: 0.65rem;
+      padding: 2px 10px;
+      border-radius: 999px;
+      font-weight: 600;
+      display: inline-block;
+      margin-left: 8px;
+      animation: pulse-badge 1.5s infinite;
+    }
+    .pedido-pendiente-sync {
+      border-left: 4px solid #f59e0b !important;
+    }
+    .pedido-sincronizado {
+      border-left: 4px solid #10b981 !important;
+    }
+  </style>
+</head>
+<body class="bg-gray-100">
+
+<div id="app" class="min-h-screen"></div>
+
+<script>
+  // ==================== CONFIGURACIÓN ====================
+  // ✅ NUEVA URL DE APPS SCRIPT (PUBLICADA)
+  const URL_APPSCRIPT = 'https://script.google.com/macros/s/AKfycbx7MAclzbjOR3CYdt2CEP6bfLL_toYgdhd-2rGLKJIlUCYyn24MrFNr-np6r0n6EedW_Q/exec';
+  const URL_SISTEMA_ABONOS = 'https://script.google.com/macros/s/AKfycbw3eOunDhSOCB-WPWY0JYmfYtd2vyhDWanOgcaELx_CTQzNxjrRCoOqYV7lgETZ2fqOMg/exec';
+  const URL_IMPRESORA_BLUETOOTH = 'https://santiagot4.github.io/5--imprimir/';
+  let impresoraPreConectada = false;
+
+  // ==================== INTERVALO DE SINCRONIZACIÓN ====================
+  let syncInterval = null;
+  const SYNC_INTERVAL_MS = 60000; // 60 segundos
+
+  // ==================== COMUNICACIÓN CON APPS SCRIPT ====================
+  
+  // ===== Para LEER datos (GET) =====
+  function callAppScriptGET(action) {
+    return new Promise((resolve, reject) => {
+      fetch(URL_APPSCRIPT + '?action=' + action, {
+        method: 'GET',
+        mode: 'cors'
+      })
+      .then(response => {
+        if (!response.ok) {
+          throw new Error('Error HTTP: ' + response.status);
+        }
+        return response.text();  // ← LEER COMO TEXTO
+      })
+      .then(text => {
+        console.log('📥 Recibido (GET):', text);
+        
+        // TRADUCIR DE TEXTO A OBJETO
+        let data;
+        try {
+          data = JSON.parse(text);
+        } catch (error) {
+          throw new Error('La respuesta no es JSON válido: ' + text.substring(0, 100));
+        }
+        
+        if (data.success) {
+          resolve(data.data);
+        } else {
+          reject(new Error(data.error || 'Error desconocido'));
+        }
+      })
+      .catch(error => {
+        console.error('❌ Error en callAppScriptGET:', error);
+        reject(error);
+      });
+    });
+  }
+  
+  // ===== Para ESCRIBIR datos (POST) =====
+  function callAppScriptPOST(action, payload = {}) {
+    return new Promise((resolve, reject) => {
+      // ===== PASO 1: CONSTRUIR OBJETO =====
+      const objeto = { action, payload };
+      
+      // ===== PASO 2: TRADUCIR A TEXTO PLANO =====
+      const body = JSON.stringify(objeto);
+      
+      console.log('📤 Enviando POST:', body);
+      
+      // ===== PASO 3: ENVIAR POR EL CANAL (TEXTO PLANO) =====
+      // ✅ Usamos 'no-cors' para evitar preflight CORS
+      // ⚠️ Con 'no-cors' NO podemos leer la respuesta, pero evitamos errores CORS
+      fetch(URL_APPSCRIPT, {
+        method: 'POST',
+        mode: 'no-cors',  // ← CAMBIADO: 'no-cors' en lugar de 'cors'
+        headers: {
+          'Content-Type': 'text/plain'  // ← CLAVE: formato neutro
+        },
+        body: body  // ← Texto plano
+      })
+      .then(() => {
+        // ✅ Con 'no-cors', si llegamos aquí, la petición se envió
+        // No podemos leer la respuesta, pero asumimos éxito
+        console.log('📤 POST enviado correctamente (respuesta opaca)');
+        resolve({ success: true, mensaje: 'Petición enviada' });
+      })
+      .catch(error => {
+        console.error('❌ Error en callAppScriptPOST:', error);
+        reject(error);
+      });
+    });
+  }
+  
+  // ==================== ESTADO ====================
+  let state = {
+    user: null,
+    productos: [],
+    clientes: [],
+    pedidos: [],
+    detalles_pedido: [],
+    transacciones: [],
+    estadisticas: [],
+    usuarios: [],
+    configNumeracion: { ultimoNumero: 1000 },
+    loading: true,
+    activeTab: 'inicio',
+    cart: [],
+    selectedProduct: null,
+    numValue: '0',
+    showCart: false,
+    showPayment: false,
+    selectedClient: null,
+    selectedClientName: '',
+    searchProductText: '',
+    searchClientTextVender: '',
+    searchClientTextClientes: '',
+    selectedCategory: 'TODOS',
+    editingCartIndex: null,
+    editQuantityValue: '',
+    showOrderDetail: false,
+    selectedOrderId: null,
+    showClientHistory: false,
+    selectedClientForHistory: null,
+    showNewClientModal: false,
+    newClientName: '',
+    newClientPhone: '',
+    observacion: '',
+    showPrintModal: false,
+    lastOrderData: null,
+    showEditOrderModal: false,
+    editingOrder: null,
+    editingOrderDetails: [],
+    editingOrderOldData: null,
+    editCart: [],
+    editSelectedProduct: null,
+    editNumValue: '0',
+    editObservacion: '',
+    editSelectedClient: null,
+    showEditQuantityModal: false,
+    editingEditCartIndex: null,
+    showConfigNumeracionModal: false,
+    nuevoNumeroInicial: '',
+    loadingButtons: {
+      registrarVenta: false,
+      editarPedido: false,
+      eliminarPedido: false,
+      confirmarPedido: false,
+      actualizarNumeracion: false,
+      enviarClave: false,
+      reenviarClave: false,
+      validarClave: false,
+      revertirTransaccion: false
+    },
+    filtroPedidos: {
+      vendedor: 'TODOS',
+      fechaInicio: '',
+      fechaFin: '',
+      tipoFiltro: 'ninguno',
+      orden: 'fecha_desc'
+    },
+    filtroTransacciones: {
+      vendedor: 'TODOS',
+      fechaInicio: '',
+      fechaFin: '',
+      tipoFiltro: 'ninguno',
+      orden: 'fecha_desc'
+    },
+    hayNuevosDatos: false,
+    ultimaActualizacion: null,
+    // Nuevos campos para control de sincronización
+    syncInProgress: false,
+    ultimaSincronizacion: null,
+    pedidosPendientesSync: []
+  };
+
+  let transaccionIdActual = null;
+
+  // ==================== FUNCIONES DE FECHA ====================
+  function getColombiaDate() {
+    const now = new Date();
+    const colombiaDate = new Date(now.getTime() - (5 * 60 * 60 * 1000));
+    const year = colombiaDate.getUTCFullYear();
+    const month = String(colombiaDate.getUTCMonth() + 1).padStart(2, '0');
+    const day = String(colombiaDate.getUTCDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+
+  function getColombiaDateTime() {
+    const now = new Date();
+    const colombiaDate = new Date(now.getTime() - (5 * 60 * 60 * 1000));
+    return colombiaDate.toISOString().replace('T', ' ').slice(0, 19);
+  }
+
+  // ==================== FUNCIONES DE UTILIDAD ====================
+  function getNumeroFactura(pedido) {
+    if (!pedido) return 'Sin número';
+    if (pedido.numero_factura && typeof pedido.numero_factura === 'number') {
+      return pedido.numero_factura;
+    }
+    if (pedido.numero_factura && typeof pedido.numero_factura === 'string') {
+      return pedido.numero_factura;
+    }
+    return pedido.id_pedido;
+  }
+
+  function formatFecha(fecha) {
+    if (!fecha) return 'Sin fecha';
+    if (typeof fecha === 'string') return fecha.replace('T', ' ');
+    if (fecha instanceof Date) {
+      const year = fecha.getFullYear();
+      const month = String(fecha.getMonth() + 1).padStart(2, '0');
+      const day = String(fecha.getDate()).padStart(2, '0');
+      const hours = String(fecha.getHours()).padStart(2, '0');
+      const minutes = String(fecha.getMinutes()).padStart(2, '0');
+      return `${year}-${month}-${day} ${hours}:${minutes}`;
+    }
+    return String(fecha);
+  }
+
+  function mostrarToast(mensaje, tipo = 'success') {
+    const toast = document.createElement('div');
+    toast.className = `toast ${tipo === 'error' ? 'error' : tipo === 'info' ? 'info' : tipo === 'warning' ? 'warning' : ''}`;
+    toast.innerHTML = mensaje;
+    document.body.appendChild(toast);
+    setTimeout(() => {
+      toast.style.opacity = '0';
+      toast.style.transform = 'translateX(-50%) translateY(-20px)';
+      setTimeout(() => toast.remove(), 300);
+    }, 3000);
+  }
+
+  function setButtonLoading(buttonName, isLoading) {
+    state.loadingButtons[buttonName] = isLoading;
+    render();
+  }
+
+  function calcularSiguienteNumeroFacturaLocal() {
+    let maxNumero = state.configNumeracion.ultimoNumero || 1000;
+    for (const pedido of state.pedidos) {
+      if (pedido.numero_factura && typeof pedido.numero_factura === 'number') {
+        if (pedido.numero_factura > maxNumero) maxNumero = pedido.numero_factura;
+      }
+    }
+    for (const pedido of state.pedidos) {
+      if (pedido.numero_factura && typeof pedido.numero_factura === 'string') {
+        const match = pedido.numero_factura.match(/Supuesto\((\d+)\)/);
+        if (match) {
+          const num = parseInt(match[1]);
+          if (num > maxNumero) maxNumero = num;
+        }
+      }
+    }
+    return maxNumero + 1;
+  }
+
+  // ==================== FILTROS ====================
+  function filtrarOrdenarPedidos() {
+    let pedidosFiltrados = [...state.pedidos];
+    if (state.filtroPedidos.vendedor !== 'TODOS') pedidosFiltrados = pedidosFiltrados.filter(p => p.nombre_vendedor === state.filtroPedidos.vendedor);
+    if (state.filtroPedidos.tipoFiltro === 'fecha' && state.filtroPedidos.fechaInicio) {
+      const fechaInicio = new Date(state.filtroPedidos.fechaInicio);
+      fechaInicio.setHours(0,0,0,0);
+      pedidosFiltrados = pedidosFiltrados.filter(p => new Date(p.fecha) >= fechaInicio);
+    } else if (state.filtroPedidos.tipoFiltro === 'rango' && state.filtroPedidos.fechaInicio && state.filtroPedidos.fechaFin) {
+      const fechaInicio = new Date(state.filtroPedidos.fechaInicio);
+      const fechaFin = new Date(state.filtroPedidos.fechaFin);
+      fechaInicio.setHours(0,0,0,0);
+      fechaFin.setHours(23,59,59,999);
+      pedidosFiltrados = pedidosFiltrados.filter(p => new Date(p.fecha) >= fechaInicio && new Date(p.fecha) <= fechaFin);
+    }
+    pedidosFiltrados.sort((a, b) => {
+      if (state.filtroPedidos.orden === 'fecha_desc') return new Date(b.fecha) - new Date(a.fecha);
+      if (state.filtroPedidos.orden === 'fecha_asc') return new Date(a.fecha) - new Date(b.fecha);
+      if (state.filtroPedidos.orden === 'consecutivo_desc') return (b.numero_factura || 0) - (a.numero_factura || 0);
+      if (state.filtroPedidos.orden === 'consecutivo_asc') return (a.numero_factura || 0) - (b.numero_factura || 0);
+      if (state.filtroPedidos.orden === 'total_desc') return b.total - a.total;
+      if (state.filtroPedidos.orden === 'total_asc') return a.total - b.total;
+      return 0;
+    });
+    return pedidosFiltrados;
+  }
+
+  function filtrarOrdenarTransacciones() {
+    let transaccionesFiltradas = [...state.pedidos.filter(p => p.estado === 'Confirmado')];
+    if (state.filtroTransacciones.vendedor !== 'TODOS') transaccionesFiltradas = transaccionesFiltradas.filter(p => p.nombre_vendedor === state.filtroTransacciones.vendedor);
+    if (state.filtroTransacciones.tipoFiltro === 'fecha' && state.filtroTransacciones.fechaInicio) {
+      const fechaInicio = new Date(state.filtroTransacciones.fechaInicio);
+      fechaInicio.setHours(0,0,0,0);
+      transaccionesFiltradas = transaccionesFiltradas.filter(p => new Date(p.fecha) >= fechaInicio);
+    } else if (state.filtroTransacciones.tipoFiltro === 'rango' && state.filtroTransacciones.fechaInicio && state.filtroTransacciones.fechaFin) {
+      const fechaInicio = new Date(state.filtroTransacciones.fechaInicio);
+      const fechaFin = new Date(state.filtroTransacciones.fechaFin);
+      fechaInicio.setHours(0,0,0,0);
+      fechaFin.setHours(23,59,59,999);
+      transaccionesFiltradas = transaccionesFiltradas.filter(p => new Date(p.fecha) >= fechaInicio && new Date(p.fecha) <= fechaFin);
+    }
+    transaccionesFiltradas.sort((a, b) => {
+      if (state.filtroTransacciones.orden === 'fecha_desc') return new Date(b.fecha) - new Date(a.fecha);
+      if (state.filtroTransacciones.orden === 'fecha_asc') return new Date(a.fecha) - new Date(b.fecha);
+      if (state.filtroTransacciones.orden === 'consecutivo_desc') return (b.numero_factura || 0) - (a.numero_factura || 0);
+      if (state.filtroTransacciones.orden === 'consecutivo_asc') return (a.numero_factura || 0) - (b.numero_factura || 0);
+      if (state.filtroTransacciones.orden === 'total_desc') return b.total - a.total;
+      if (state.filtroTransacciones.orden === 'total_asc') return a.total - b.total;
+      return 0;
+    });
+    return transaccionesFiltradas;
+  }
+
+  // ==================== RENDER DE LISTAS ====================
+  function renderOrdersList(pedidosPendientes) {
+    if (!pedidosPendientes || pedidosPendientes.length === 0) {
+      return '<p class="text-gray-400 text-center py-8 bg-white rounded-xl">No hay pedidos pendientes</p>';
+    }
+    return pedidosPendientes.map(p => {
+      const esProvisional = p.numero_factura && typeof p.numero_factura === 'string' && p.numero_factura.includes('Supuesto');
+      const tieneError = p.error_sincronizacion === true;
+      const syncClass = esProvisional ? 'pedido-pendiente-sync' : 'pedido-sincronizado';
+      const estadoLabel = esProvisional ? '⏳ Pendiente de sincronizar' : tieneError ? '⚠️ Error al sincronizar' : '';
+      
+      return `
+      <div class="bg-white rounded-xl p-4 shadow-sm border ${syncClass}">
+        <div class="flex justify-between items-start">
+          <div>
+            <span class="font-bold">${p.nombre_cliente}</span>
+            <p class="text-xs text-gray-400">Factura #${getNumeroFactura(p)} ${esProvisional ? '<span class="text-amber-500 text-xs">⏳ Provisional</span>' : ''} ${tieneError ? '<span class="text-red-500 text-xs">⚠️ Error</span>' : ''}</p>
+            <p class="text-xs text-gray-400">📅 ${formatFecha(p.fecha)}</p>
+            <p class="text-xs text-gray-400">👤 ${p.nombre_vendedor || 'Sin vendedor'}</p>
+            <p class="text-xs text-teal-600 font-bold mt-1">📦 Productos: ${p.total_productos || 0}</p>
+            ${esProvisional ? `<p class="text-xs text-amber-500 mt-1">🔄 Pendiente de sincronización...</p>` : ''}
+            ${tieneError ? `<p class="text-xs text-red-500 mt-1">${p.mensaje_error || 'Error al sincronizar'}</p>` : ''}
+          </div>
+          <div class="text-right">
+            <span class="text-teal-600 font-bold">$${Number(p.total).toLocaleString()}</span>
+          </div>
+        </div>
+        <div class="flex gap-2 mt-3">
+          <button onclick="verDetallePedido('${p.id_pedido}')" class="flex-1 bg-gray-100 py-2 rounded-lg text-sm">Ver</button>
+          ${!esProvisional ? `
+            <button onclick="abrirEditarPedido('${p.id_pedido}')" class="flex-1 bg-yellow-500 text-white py-2 rounded-lg text-sm">✏️ Editar</button>
+            <button onclick="imprimirPedido('${p.id_pedido}')" class="flex-1 bg-blue-500 text-white py-2 rounded-lg text-sm">🖨️ Imprimir</button>
+          ` : `
+            <button onclick="reintentarSincronizarPedido('${p.id_pedido}')" class="flex-1 bg-orange-500 text-white py-2 rounded-lg text-sm">🔄 Reintentar</button>
+          `}
+        </div>
+      </div>
+    `}).join('');
+  }
+
+  function renderTransactionsList(transacciones) {
+    if (!transacciones || transacciones.length === 0) {
+      return '<p class="text-gray-400 text-center py-8 bg-white rounded-xl">No hay transacciones confirmadas</p>';
+    }
+    return transacciones.map(p => `
+      <div class="bg-white rounded-xl p-4 shadow-sm border">
+        <div class="flex justify-between">
+          <div>
+            <span class="font-bold">${p.nombre_cliente}</span>
+            <p class="text-xs text-gray-400">Factura #${getNumeroFactura(p)}</p>
+            <p class="text-xs text-gray-400">📅 ${formatFecha(p.fecha)}</p>
+            <p class="text-xs text-gray-400">👤 Vendedor: ${p.nombre_vendedor || 'Sin vendedor'}</p>
+            <p class="text-xs text-teal-600 font-bold mt-1">📦 Productos: ${p.total_productos || 0}</p>
+          </div>
+          <div class="text-right">
+            <span class="text-teal-600 font-bold">$${Number(p.total).toLocaleString()}</span>
+          </div>
+        </div>
+        <div class="flex gap-2 mt-3">
+          <button onclick="verDetallePedido('${p.id_pedido}')" class="flex-1 bg-gray-100 py-2 rounded-lg text-sm">Ver</button>
+          <button onclick="imprimirPedido('${p.id_pedido}')" class="flex-1 bg-blue-500 text-white py-2 rounded-lg text-sm">🖨️ Imprimir</button>
+          <button onclick="solicitarEdicionTransaccion('${p.id_pedido}')" class="flex-1 bg-orange-500 text-white py-2 rounded-lg text-sm">✏️ Enmendar 🔐</button>
+        </div>
+      </div>
+    `).join('');
+  }
+
+  // ==================== ACTUALIZACIÓN SELECTIVA DE UI ====================
+
+  function actualizarBadgeNuevosDatos() {
+    const badge = document.getElementById('badgeNuevosDatos');
+    if (!badge) return;
+    if (state.hayNuevosDatos) {
+      badge.classList.remove('hidden');
+    } else {
+      badge.classList.add('hidden');
+    }
+  }
+
+  function actualizarNumerosHome() {
+    const today = getColombiaDate();
+    const todayStats = state.estadisticas.find(s => s.fecha === today) || { facturacion: 0, ventas: 0 };
+    const pendingOrders = state.pedidos.filter(p => p.estado === 'Pendiente').length;
+
+    const ventasElement = document.getElementById('ventasHoy');
+    if (ventasElement) {
+      ventasElement.innerText = '$' + (todayStats.facturacion?.toLocaleString() || 0);
+    }
+
+    const pendientesElement = document.getElementById('pedidosPendientes');
+    if (pendientesElement) {
+      pendientesElement.innerText = pendingOrders;
+    }
+  }
+
+  function actualizarListaPedidos() {
+    const container = document.getElementById('pedidosContainer');
+    if (!container) return;
+
+    const pedidosFiltrados = filtrarOrdenarPedidos();
+    const pedidosPendientes = pedidosFiltrados.filter(p => p.estado === 'Pendiente');
+
+    container.innerHTML = renderOrdersList(pedidosPendientes);
+
+    const titulo = container.parentElement?.querySelector('h2');
+    if (titulo) {
+      const pendientesSync = state.pedidos.filter(p => p.es_provisional === true).length;
+      const syncText = pendientesSync > 0 ? ` (${pendientesSync} pendientes de sincronizar)` : '';
+      titulo.innerHTML = `📋 Pedidos Pendientes (${pedidosPendientes.length})${syncText}`;
+    }
+  }
+
+  function actualizarListaTransacciones() {
+    const container = document.getElementById('transaccionesContainer');
+    if (!container) return;
+
+    const transaccionesFiltradas = filtrarOrdenarTransacciones();
+
+    container.innerHTML = renderTransactionsList(transaccionesFiltradas);
+
+    const titulo = container.parentElement?.querySelector('h2');
+    if (titulo) {
+      titulo.innerHTML = `💰 Transacciones Confirmadas (${transaccionesFiltradas.length})`;
+    }
+  }
+
+  function actualizarUISelectiva(tabActual) {
+    if (tabActual === 'inicio' || state.activeTab === 'inicio') {
+      actualizarNumerosHome();
+    }
+    if (tabActual === 'pedidos' || state.activeTab === 'pedidos') {
+      actualizarListaPedidos();
+    }
+    if (tabActual === 'transacciones' || state.activeTab === 'transacciones') {
+      actualizarListaTransacciones();
+    }
+    actualizarBadgeNuevosDatos();
+  }
+
+  // ==================== VALIDACIÓN DE STOCK ====================
+
+  function validarStockCarrito() {
+    let cambios = false;
+    const itemsAEliminar = [];
+    
+    for (let i = 0; i < state.cart.length; i++) {
+      const item = state.cart[i];
+      const productoActual = state.productos.find(p => p.código === item.product.código);
+      
+      if (!productoActual) {
+        mostrarToast(`⚠️ "${item.product.nombre}" ya no está disponible, se eliminará del carrito`, 'error');
+        itemsAEliminar.push(i);
+        cambios = true;
+        continue;
+      }
+      
+      const stockActual = Number(productoActual.stock) || 0;
+      if (stockActual < item.quantity) {
+        if (stockActual === 0) {
+          mostrarToast(`⚠️ "${item.product.nombre}" no tiene stock disponible, se eliminará del carrito`, 'error');
+          itemsAEliminar.push(i);
+          cambios = true;
+        } else {
+          mostrarToast(`⚠️ Stock insuficiente para "${item.product.nombre}" (disponible: ${stockActual}), se ajustará la cantidad`, 'warning');
+          item.quantity = stockActual;
+          cambios = true;
+        }
+      }
+      
+      const precioSistema = Number(productoActual.precio);
+      if (precioSistema !== item.unitPrice && !item.precioDecidido) {
+        item.precioSistema = precioSistema;
+        item.pendienteDecision = true;
+        cambios = true;
+      }
+    }
+    
+    for (let i = itemsAEliminar.length - 1; i >= 0; i--) {
+      state.cart.splice(itemsAEliminar[i], 1);
+    }
+    
+    if (cambios) {
+      setTimeout(() => {
+        if (state.cart.some(i => i.pendienteDecision)) {
+          mostrarToast('⚠️ Algunos precios han cambiado, revisa el carrito', 'warning');
+        }
+      }, 500);
+    }
+    
+    return cambios;
+  }
+
+  // ==================== SINCRONIZACIÓN EN SEGUNDO PLANO ====================
+
+  function iniciarSincronizacionAutomatica() {
+    if (syncInterval) {
+      clearInterval(syncInterval);
+    }
+    syncInterval = setInterval(() => {
+      if (!state.syncInProgress) {
+        sincronizarDatosEnSegundoPlano();
+      }
+    }, SYNC_INTERVAL_MS);
+    console.log('🔄 Sincronización automática iniciada (cada ' + (SYNC_INTERVAL_MS / 60000) + ' min)');
+  }
+
+  function detenerSincronizacionAutomatica() {
+    if (syncInterval) {
+      clearInterval(syncInterval);
+      syncInterval = null;
+      console.log('⏹️ Sincronización automática detenida');
+    }
+  }
+
+  function sincronizarDatosEnSegundoPlano() {
+    if (state.syncInProgress) return;
+    state.syncInProgress = true;
+    
+    console.log('🔄 Sincronizando datos en segundo plano...');
+    
+    // 1. Buscar pedidos pendientes de sincronizar
+    const pedidosPendientes = state.pedidos.filter(p => 
+      p.es_provisional === true || 
+      (p.numero_factura && typeof p.numero_factura === 'string' && p.numero_factura.includes('Supuesto'))
+    );
+    
+    if (pedidosPendientes.length === 0) {
+      // Si no hay pedidos pendientes, solo refrescar datos
+      refreshDataCompleta(true); // true = silencioso
+      state.syncInProgress = false;
+      return;
+    }
+    
+    console.log(`📦 ${pedidosPendientes.length} pedidos pendientes de sincronizar`);
+    
+    // 2. Reintentar sincronizar cada pedido pendiente
+    let sincronizados = 0;
+    let fallidos = 0;
+    
+    const promesas = pedidosPendientes.map(pedido => {
+      // Buscar los detalles del pedido
+      const detalles = state.detalles_pedido.filter(d => d.id_pedido === pedido.id_pedido);
+      
+      // Reconstruir el payload
+      const order = {
+        fecha: pedido.fecha,
+        id_cliente: pedido.id_cliente,
+        nombre_cliente: pedido.nombre_cliente,
+        id_vendedor: pedido.id_vendedor || '1',
+        nombre_vendedor: pedido.nombre_vendedor || 'Admin',
+        total: pedido.total,
+        estado: pedido.estado || 'Pendiente',
+        observacion: pedido.observacion || '',
+        total_productos: pedido.total_productos || detalles.length
+      };
+      
+      const details = detalles.map(d => ({
+        id_detail: d.id_detail,
+        id_pedido: pedido.id_pedido,
+        codigo_producto: d.codigo_producto,
+        nombre_producto: d.nombre_producto,
+        cantidad: d.cantidad,
+        precio_unitario: d.precio_unitario,
+        subtotal: d.subtotal,
+        codigo_alternativo: d.codigo_alternativo || ''
+      }));
+      
+      return callAppScriptPOST('registrarVenta', {
+        payload: JSON.stringify({
+          order: order,
+          details: details,
+          idPedidoTemporal: pedido.id_pedido,
+          numeroProvisional: parseInt(pedido.numero_factura.match(/\d+/)?.[0] || 0)
+        })
+      })
+      .then(() => {
+        sincronizados++;
+        pedido.sincronizado = true;
+        pedido.error_sincronizacion = false;
+        pedido.es_provisional = false;
+        console.log(`✅ Pedido ${pedido.id_pedido} sincronizado`);
+      })
+      .catch(error => {
+        fallidos++;
+        pedido.error_sincronizacion = true;
+        pedido.mensaje_error = error.message || 'Error al sincronizar';
+        console.error(`❌ Error al sincronizar pedido ${pedido.id_pedido}:`, error);
+      });
+    });
+    
+    Promise.all(promesas)
+      .then(() => {
+        // Recargar datos frescos después de sincronizar
+        refreshDataCompleta(true);
+        state.syncInProgress = false;
+        console.log(`✅ Sincronización completada: ${sincronizados} exitosos, ${fallidos} fallidos`);
+        if (sincronizados > 0) {
+          mostrarToast(`✅ ${sincronizados} pedidos sincronizados con Google`, 'success');
+        }
+        if (fallidos > 0) {
+          mostrarToast(`⚠️ ${fallidos} pedidos no pudieron sincronizarse`, 'warning');
+        }
+        render();
+      })
+      .catch(() => {
+        state.syncInProgress = false;
+      });
+  }
+
+  // ==================== ACTUALIZACIÓN POR BOTONES ====================
+
+  function actualizarDatosRapido() {
+    const btn = document.getElementById('btnActualizarRapido');
+    if (btn) {
+      btn.innerHTML = '🔄 Actualizando...';
+      btn.disabled = true;
+    }
+
+    mostrarToast('🔄 Actualizando datos...', 'info');
+
+    // Guardar snapshot del estado actual
+    const cartSnapshot = JSON.parse(JSON.stringify(state.cart));
+    const clientSnapshot = state.selectedClient;
+    const observacionSnapshot = state.observacion;
+    const activeTabSnapshot = state.activeTab;
+    const showEditOrderModalSnapshot = state.showEditOrderModal;
+    const editingOrderSnapshot = state.editingOrder;
+
+    // Preservar pedidos pendientes
+    const pedidosPendientes = state.pedidos.filter(p => 
+      p.es_provisional === true || 
+      (p.numero_factura && typeof p.numero_factura === 'string' && p.numero_factura.includes('Supuesto'))
+    );
+
+    callAppScriptGET('getDatosCompletos')
+      .then(data => {
+        let pedidosActualizados = data.pedidos || [];
+        
+        // Filtrar pedidos de Google que no estén en pendientes
+        const idsPendientes = pedidosPendientes.map(p => p.id_pedido);
+        pedidosActualizados = pedidosActualizados.filter(p => !idsPendientes.includes(p.id_pedido));
+
+        // Si está editando un pedido, preservarlo
+        if (showEditOrderModalSnapshot && editingOrderSnapshot) {
+          const pedidoEnEdicion = editingOrderSnapshot.id_pedido;
+          pedidosActualizados = pedidosActualizados.filter(p => p.id_pedido !== pedidoEnEdicion);
+          const pedidoLocal = state.pedidos.find(p => p.id_pedido === pedidoEnEdicion);
+          if (pedidoLocal && !pedidoLocal.es_provisional) {
+            pedidosActualizados.push(pedidoLocal);
+          }
+        }
+
+        state.productos = data.productos || [];
+        state.clientes = data.clientes || [];
+        state.pedidos = [...pedidosActualizados, ...pedidosPendientes];
+        state.detalles_pedido = data.detalles_pedido || [];
+        state.transacciones = data.transacciones || [];
+        state.estadisticas = data.estadisticas || [];
+        state.configNumeracion = data.configNumeracion || { ultimoNumero: 1000 };
+
+        // Ordenar pedidos
+        state.pedidos.sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
+
+        // Validar stock del carrito
+        if (cartSnapshot.length > 0) {
+          validarStockCarrito();
+        }
+
+        state.cart = cartSnapshot;
+        state.selectedClient = clientSnapshot;
+        if (clientSnapshot) {
+          state.selectedClientName = clientSnapshot.nombre;
+        }
+        state.observacion = observacionSnapshot;
+
+        state.hayNuevosDatos = true;
+        state.ultimaActualizacion = new Date();
+
+        if (btn) {
+          btn.innerHTML = '🔄 Actualizar Datos';
+          btn.disabled = false;
+        }
+
+        actualizarUISelectiva(activeTabSnapshot);
+        mostrarToast('✅ Datos actualizados', 'success');
+      })
+      .catch(error => {
+        if (btn) {
+          btn.innerHTML = '🔄 Actualizar Datos';
+          btn.disabled = false;
+        }
+        mostrarToast('❌ Error al actualizar: ' + error.message, 'error');
+        console.error('Error en actualización:', error);
+      });
+  }
+
+  function refreshDataCompleta(silencioso = false) {
+    if (!silencioso) {
+      state.loading = true;
+      render();
+    }
+
+    // Preservar pedidos pendientes
+    const pedidosPendientes = state.pedidos.filter(p => 
+      p.es_provisional === true || 
+      (p.numero_factura && typeof p.numero_factura === 'string' && p.numero_factura.includes('Supuesto'))
+    );
+
+    callAppScriptGET('getDatosCompletos')
+      .then(data => {
+        let pedidosActualizados = data.pedidos || [];
+        const idsPendientes = pedidosPendientes.map(p => p.id_pedido);
+        pedidosActualizados = pedidosActualizados.filter(p => !idsPendientes.includes(p.id_pedido));
+
+        state.productos = data.productos || [];
+        state.clientes = data.clientes || [];
+        state.pedidos = [...pedidosActualizados, ...pedidosPendientes];
+        state.detalles_pedido = data.detalles_pedido || [];
+        state.transacciones = data.transacciones || [];
+        state.estadisticas = data.estadisticas || [];
+        state.usuarios = data.usuarios || [];
+        state.configNumeracion = data.configNumeracion || { ultimoNumero: 1000 };
+        
+        state.pedidos.sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
+        
+        state.hayNuevosDatos = false;
+        state.ultimaActualizacion = new Date();
+        state.ultimaSincronizacion = new Date();
+
+        if (!silencioso) {
+          state.loading = false;
+          render();
+          mostrarToast('✅ Datos cargados', 'success');
+        } else {
+          // Si es silencioso, solo actualizar la UI sin mostrar loading
+          actualizarUISelectiva(state.activeTab);
+        }
+      })
+      .catch(error => {
+        if (!silencioso) {
+          state.loading = false;
+          render();
+          mostrarToast('❌ Error al cargar: ' + error.message, 'error');
+        } else {
+          console.error('Error en refresh silencioso:', error);
+        }
+      });
+  }
+
+  // ==================== REINTENTAR SINCRONIZAR PEDIDO ====================
+  
+  window.reintentarSincronizarPedido = (pedidoId) => {
+    const pedido = state.pedidos.find(p => p.id_pedido === pedidoId);
+    if (!pedido) {
+      mostrarToast('Pedido no encontrado', 'error');
+      return;
+    }
+    
+    const detalles = state.detalles_pedido.filter(d => d.id_pedido === pedidoId);
+    
+    const order = {
+      fecha: pedido.fecha,
+      id_cliente: pedido.id_cliente,
+      nombre_cliente: pedido.nombre_cliente,
+      id_vendedor: pedido.id_vendedor || '1',
+      nombre_vendedor: pedido.nombre_vendedor || 'Admin',
+      total: pedido.total,
+      estado: pedido.estado || 'Pendiente',
+      observacion: pedido.observacion || '',
+      total_productos: pedido.total_productos || detalles.length
+    };
+    
+    const details = detalles.map(d => ({
+      id_detail: d.id_detail,
+      id_pedido: pedido.id_pedido,
+      codigo_producto: d.codigo_producto,
+      nombre_producto: d.nombre_producto,
+      cantidad: d.cantidad,
+      precio_unitario: d.precio_unitario,
+      subtotal: d.subtotal,
+      codigo_alternativo: d.codigo_alternativo || ''
+    }));
+    
+    mostrarToast('🔄 Reintentando sincronizar...', 'info');
+    
+    callAppScriptPOST('registrarVenta', {
+      payload: JSON.stringify({
+        order: order,
+        details: details,
+        idPedidoTemporal: pedido.id_pedido,
+        numeroProvisional: parseInt(pedido.numero_factura.match(/\d+/)?.[0] || 0)
+      })
+    })
+    .then(() => {
+      pedido.sincronizado = true;
+      pedido.error_sincronizacion = false;
+      pedido.es_provisional = false;
+      mostrarToast('✅ Pedido sincronizado correctamente', 'success');
+      refreshDataCompleta();
+    })
+    .catch(error => {
+      pedido.error_sincronizacion = true;
+      pedido.mensaje_error = error.message || 'Error al sincronizar';
+      mostrarToast('❌ Error al sincronizar: ' + error.message, 'error');
+      render();
+    });
+  };
+
+  function actualizarPedidoLocalmente(pedidoActualizado, detallesActualizados) {
+    const index = state.pedidos.findIndex(p => p.id_pedido === pedidoActualizado.id_pedido);
+    if (index !== -1) {
+      state.pedidos[index] = pedidoActualizado;
+    } else {
+      state.pedidos.unshift(pedidoActualizado);
+    }
+    if (detallesActualizados) {
+      state.detalles_pedido = state.detalles_pedido.filter(d => d.id_pedido !== pedidoActualizado.id_pedido);
+      state.detalles_pedido.push(...detallesActualizados);
+    }
+    state.pedidos.sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
+  }
+
+  function actualizarStockLocalmente(productosVendidos) {
+    for (const item of productosVendidos) {
+      const productoIndex = state.productos.findIndex(p => p.código === item.codigo_producto);
+      if (productoIndex !== -1) {
+        const stockActual = state.productos[productoIndex].stock || 0;
+        state.productos[productoIndex].stock = Math.max(0, stockActual - item.cantidad);
+      }
+    }
+  }
+
+  function actualizarNumeracionLocalmente(nuevoNumero) {
+    state.configNumeracion.ultimoNumero = nuevoNumero;
+  }
+
+  // ==================== FUNCIONES DE RENDER ====================
+  function render() {
+    const app = document.getElementById('app');
+    if (state.loading) {
+      app.innerHTML = `<div class="flex flex-col items-center justify-center min-h-screen gap-4"><div class="w-12 h-12 border-4 border-teal-600 border-t-transparent rounded-full animate-spin"></div><p class="text-gray-600 font-medium">Cargando Cotilpez POS...</p></div>`;
+      return;
+    }
+    if (!state.user) renderLogin();
+    else renderMainApp();
+  }
+
+  function renderLogin() {
+    const activeUsers = state.usuarios.filter(u => u.activo === true);
+    document.getElementById('app').innerHTML = `
+      <div class="flex items-center justify-center min-h-screen bg-gray-100 p-4">
+        <div class="w-full max-w-md bg-white rounded-2xl p-8 shadow-xl">
+          <div class="text-center mb-8">
+            <div class="w-16 h-16 bg-teal-600 rounded-2xl flex items-center justify-center mx-auto mb-4"><span class="text-white font-bold text-2xl">CP</span></div>
+            <h1 class="text-2xl font-bold text-gray-800">Cotilpez S.A.S.</h1>
+            <p class="text-gray-500 text-sm">Punto de Venta</p>
+          </div>
+          <select id="loginUser" class="w-full border border-gray-300 rounded-xl p-3 mb-4 text-center bg-white">
+            <option value="">-- Selecciona un usuario --</option>
+            ${activeUsers.map(u => `<option value="${u.email}">${u.nombre} (${u.rol})</option>`).join('')}
+          </select>
+          <button onclick="handleLogin()" class="w-full bg-teal-600 text-white py-3 rounded-xl font-bold text-lg">Ingresar</button>
+          <p class="text-xs text-gray-400 text-center mt-4">📦 ${state.productos.length} productos | 👥 ${state.clientes.length} clientes</p>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderMainApp() {
+    const tabs = [
+      { id: 'inicio', label: 'Inicio', icon: '🏠' },
+      { id: 'vender', label: 'Vender', icon: '🛒' },
+      { id: 'pedidos', label: 'Pedidos', icon: '📋' },
+      { id: 'clientes', label: 'Clientes', icon: '👥' },
+      { id: 'transacciones', label: 'Transacciones', icon: '💰' },
+      { id: 'productos', label: 'Productos', icon: '📦' },
+      { id: 'configuracion', label: 'Config', icon: '⚙️' }
+    ];
+
+    let content = '';
+    if (state.activeTab === 'inicio') content = renderHome();
+    else if (state.activeTab === 'vender') content = renderSell();
+    else if (state.activeTab === 'pedidos') content = renderOrders();
+    else if (state.activeTab === 'clientes') content = renderClients();
+    else if (state.activeTab === 'productos') content = renderProductsList();
+    else if (state.activeTab === 'transacciones') content = renderTransactions();
+    else if (state.activeTab === 'configuracion') content = renderConfiguracion();
+
+    const badgeHtml = state.hayNuevosDatos ? 
+      `<span id="badgeNuevosDatos" class="badge-nuevos-datos">📦 Nuevos datos</span>` :
+      `<span id="badgeNuevosDatos" class="hidden">📦 Nuevos datos</span>`;
+
+    const syncHtml = state.syncInProgress ? 
+      `<span class="badge-sincronizando">🔄 Sincronizando...</span>` : '';
+
+    document.getElementById('app').innerHTML = `
+      <div class="pb-20">
+        <div class="bg-teal-700 text-white p-4 sticky top-0 z-20 shadow-md">
+          <div class="flex justify-between items-center">
+            <div>
+              <span class="font-bold text-lg">🐟 Cotilpez POS</span>
+              <p class="text-xs text-teal-200">${state.user?.nombre || ''}</p>
+            </div>
+            <div class="flex items-center gap-2">
+              ${badgeHtml}
+              ${syncHtml}
+              <button onclick="irASistemaAbonos()" class="bg-amber-700 px-3 py-1 rounded-lg text-sm font-medium hover:bg-amber-800 transition">
+                💰 Movimientos
+              </button>
+              <button onclick="logout()" class="bg-teal-800 px-4 py-1 rounded-lg text-sm">Salir</button>
+            </div>
+          </div>
+        </div>
+        <div class="flex bg-white border-b sticky top-[72px] z-20 overflow-x-auto">
+          ${tabs.map(t => `<button onclick="setActiveTab('${t.id}')" class="flex-1 py-3 text-center font-medium whitespace-nowrap ${state.activeTab === t.id ? 'text-teal-600 border-b-2 border-teal-600' : 'text-gray-500'}">${t.icon} ${t.label}</button>`).join('')}
+        </div>
+        <div class="p-4">${content}</div>
+      </div>
+      ${state.showCart ? renderCartModal() : ''}
+      ${state.showPayment ? renderPaymentModal() : ''}
+      ${state.selectedProduct ? renderQuantityModal() : ''}
+      ${state.showOrderDetail ? renderOrderDetailModal() : ''}
+      ${state.showClientHistory ? renderClientHistoryModal() : ''}
+      ${state.showNewClientModal ? renderNewClientModal() : ''}
+      ${state.editingCartIndex !== null ? renderEditCartModal() : ''}
+      ${state.showPrintModal ? renderPrintModal() : ''}
+      ${state.showEditOrderModal ? renderEditOrderModal() : ''}
+      ${state.showEditQuantityModal ? renderEditQuantityModal() : ''}
+      ${state.showConfigNumeracionModal ? renderConfigNumeracionModal() : ''}
+    `;
+
+    setTimeout(() => {
+      if (state.activeTab === 'vender') {
+        setupClientSearchEvents();
+        setupProductSearchEvents();
+      }
+      if (state.activeTab === 'clientes') {
+        setupClientListSearchEvents();
+      }
+      if (state.activeTab === 'pedidos' || state.activeTab === 'transacciones') {
+        setupFilterEvents();
+      }
+      if (state.showEditOrderModal) {
+        setupEditClientSearch();
+        setupEditProductSearch();
+      }
+    }, 100);
+  }
+
+  // ==================== PANTALLA DE INICIO ====================
+  function renderHome() {
+    const today = getColombiaDate();
+    const todayStats = state.estadisticas.find(s => s.fecha === today) || { facturacion: 0, ventas: 0 };
+    const pendingOrders = state.pedidos.filter(p => p.estado === 'Pendiente').length;
+    const pendientesSync = state.pedidos.filter(p => p.es_provisional === true).length;
+
+    return `
+      <div class="space-y-4">
+        <div class="bg-gradient-to-r from-teal-600 to-teal-700 rounded-xl p-5 text-white">
+          <p class="text-teal-100 text-sm">${new Date().toLocaleDateString('es-CO', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', timeZone: 'America/Bogota' })}</p>
+          <p class="text-2xl font-bold mt-1">¡Hola, ${state.user?.nombre?.split(' ')[0] || ''}!</p>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div class="bg-white rounded-xl p-4 shadow-sm border">
+            <p class="text-gray-500 text-xs">📊 Ventas Hoy</p>
+            <p id="ventasHoy" class="text-xl font-bold text-teal-600">$${todayStats.facturacion?.toLocaleString() || 0}</p>
+          </div>
+          <div class="bg-white rounded-xl p-4 shadow-sm border">
+            <p class="text-gray-500 text-xs">📋 Pedidos Pendientes</p>
+            <p id="pedidosPendientes" class="text-xl font-bold text-orange-500">${pendingOrders}</p>
+          </div>
+          <div class="bg-white rounded-xl p-4 shadow-sm border">
+            <p class="text-gray-500 text-xs">📦 Productos</p>
+            <p class="text-xl font-bold">${state.productos.length}</p>
+          </div>
+          <div class="bg-white rounded-xl p-4 shadow-sm border">
+            <p class="text-gray-500 text-xs">👥 Clientes</p>
+            <p class="text-xl font-bold">${state.clientes.length}</p>
+          </div>
+        </div>
+        ${pendientesSync > 0 ? `<div class="bg-yellow-50 p-3 rounded-xl border border-yellow-200 flex justify-between items-center"><p class="text-yellow-700 text-sm">🔄 ${pendientesSync} pedido(s) pendiente(s) de sincronizar</p><button onclick="sincronizarDatosEnSegundoPlano()" class="bg-yellow-500 text-white px-3 py-1 rounded-lg text-sm">Sincronizar ahora</button></div>` : ''}
+        ${state.ultimaSincronizacion ? `<p class="text-xs text-gray-400 text-center">Última sincronización: ${state.ultimaSincronizacion.toLocaleTimeString()}</p>` : ''}
+        <div class="flex flex-col gap-2">
+          <button onclick="setActiveTab('vender')" class="w-full bg-teal-600 text-white py-4 rounded-xl font-bold shadow-lg">➕ Nueva Venta</button>
+          <div class="flex gap-2">
+            <button id="btnActualizarRapido" onclick="actualizarDatosRapido()" class="flex-1 bg-blue-500 text-white py-2 rounded-xl font-bold text-sm shadow-lg hover:bg-blue-600 transition">
+              🔄 Actualizar Datos
+            </button>
+            <button onclick="refreshDataCompleta()" class="flex-1 bg-gray-500 text-white py-2 rounded-xl font-bold text-sm shadow-lg hover:bg-gray-600 transition">
+              🔄 Recargar Todo
+            </button>
+          </div>
+          ${state.ultimaActualizacion ? `<p class="text-xs text-gray-400 text-center">Última actualización: ${state.ultimaActualizacion.toLocaleTimeString()}</p>` : ''}
+        </div>
+      </div>
+    `;
+  }
+
+  // ==================== PANTALLA DE VENDER ====================
+  function renderSell() {
+    const cartTotal = state.cart.reduce((s, i) => s + ((i.unitPrice || i.product.precio) * i.quantity), 0);
+    const cartItems = state.cart.reduce((a, b) => a + b.quantity, 0);
+    const categories = ['TODOS', ...new Set(state.productos.map(p => p.categoría || 'General'))];
+    const filteredProducts = state.productos.filter(p => state.selectedCategory === 'TODOS' || p.categoría === state.selectedCategory);
+    const proximaFacturaLocal = calcularSiguienteNumeroFacturaLocal();
+
+    return `
+      <div class="space-y-3">
+        <div class="bg-white rounded-xl p-3 shadow-sm border relative">
+          <p class="text-sm font-bold text-gray-600 mb-2">👤 Cliente</p>
+          <input type="text" id="clientSearchInputVender" placeholder="🔍 Escribe nombre o teléfono del cliente..." class="w-full border border-gray-300 rounded-xl p-3 bg-white" autocomplete="off" value="${state.selectedClientName}">
+          <div id="clientDropdownVender" class="search-dropdown" style="display: none; position: absolute; left: 12px; right: 12px; top: 100px;"></div>
+          ${state.selectedClient ? `<div class="mt-2 bg-teal-50 p-2 rounded-lg flex justify-between items-center"><div><span class="text-sm font-medium text-teal-700">✓ Cliente seleccionado: ${state.selectedClient.nombre}</span></div><button onclick="clearSelectedClient()" class="text-xs text-red-500">✕ Cambiar</button></div>` : ''}
+          <button onclick="openNewClientModal()" class="text-xs text-teal-600 mt-2 block w-full text-left">+ Crear nuevo cliente</button>
+        </div>
+        <div class="relative"><input type="text" id="productSearchInputVender" placeholder="🔍 Escribe nombre o código del producto..." class="w-full border border-gray-300 rounded-xl p-3 bg-white" autocomplete="off"><div id="productDropdownVender" class="search-dropdown" style="display: none; position: absolute; left: 0; right: 0; top: 55px;"></div></div>
+        <div class="flex gap-2 overflow-x-auto no-scrollbar pb-2">${categories.map(c => `<button onclick="setCategory('${c}')" class="px-4 py-2 rounded-full text-sm whitespace-nowrap ${state.selectedCategory === c ? 'bg-teal-600 text-white' : 'bg-gray-200 text-gray-700'}">${c}</button>`).join('')}</div>
+        <div class="grid grid-cols-2 gap-3">${filteredProducts.map(p => `<button onclick="selectProduct('${p.código}')" class="bg-white rounded-xl p-3 shadow-sm border text-left active:scale-95 transition-all"><div class="flex justify-between"><span class="text-xs text-gray-400 bg-gray-100 px-2 py-0.5 rounded">${p.código}</span><span class="text-xs text-gray-400">📦 ${p.stock || 0}</span></div><p class="font-bold text-sm mt-2">${p.nombre}</p><p class="text-teal-600 font-bold mt-2 text-lg">$${Number(p.precio).toLocaleString()}</p></button>`).join('')}${filteredProducts.length === 0 ? '<p class="text-center text-gray-400 py-8 col-span-2">No se encontraron productos</p>' : ''}</div>
+        <div class="bg-white rounded-xl p-3 shadow-sm border"><p class="text-sm font-bold text-gray-600 mb-2">📝 Comentarios</p><textarea id="observacionVenta" rows="2" placeholder="Notas adicionales sobre la venta..." class="w-full border border-gray-300 rounded-xl p-3 bg-white" oninput="updateObservacion(this.value)">${state.observacion}</textarea></div>
+        ${cartItems > 0 ? `<div class="fixed bottom-20 left-0 right-0 px-4 z-30"><button onclick="openCart()" class="w-full bg-teal-600 text-white py-3 rounded-xl shadow-lg flex justify-between items-center px-5"><div><span class="text-xs text-teal-200">🛒 Carrito</span><p class="font-bold">${cartItems} productos</p></div><div class="text-right"><span class="text-xs text-teal-200">Total</span><p class="font-bold text-lg">$${cartTotal.toLocaleString()}</p></div><span class="text-xl">→</span></button></div>` : ''}
+      </div>
+    `;
+  }
+
+  // ==================== PANTALLA DE PEDIDOS ====================
+  function renderOrders() {
+    const vendedores = ['TODOS', ...new Set(state.pedidos.map(p => p.nombre_vendedor).filter(v => v))];
+    const pedidosFiltrados = filtrarOrdenarPedidos();
+    const pedidosPendientes = pedidosFiltrados.filter(p => p.estado === 'Pendiente');
+    const pendientesSync = state.pedidos.filter(p => p.es_provisional === true).length;
+
+    return `
+      <div class="space-y-4">
+        <div class="bg-white rounded-xl p-4 shadow-sm border">
+          <h3 class="font-bold text-sm mb-3">🔍 Filtros Avanzados</h3>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div><label class="text-xs text-gray-500">Vendedor</label><select id="filtroVendedorPedidos" class="w-full border border-gray-300 rounded-lg p-2 text-sm" onchange="aplicarFiltroPedidos()">${vendedores.map(v => `<option value="${v}" ${state.filtroPedidos.vendedor === v ? 'selected' : ''}>${v}</option>`).join('')}</select></div>
+            <div><label class="text-xs text-gray-500">Ordenar por</label><select id="filtroOrdenPedidos" class="w-full border border-gray-300 rounded-lg p-2 text-sm" onchange="aplicarFiltroPedidos()"><option value="fecha_desc" ${state.filtroPedidos.orden === 'fecha_desc' ? 'selected' : ''}>Más reciente primero</option><option value="fecha_asc" ${state.filtroPedidos.orden === 'fecha_asc' ? 'selected' : ''}>Más antiguo primero</option><option value="consecutivo_desc" ${state.filtroPedidos.orden === 'consecutivo_desc' ? 'selected' : ''}>Factura (Z-A)</option><option value="consecutivo_asc" ${state.filtroPedidos.orden === 'consecutivo_asc' ? 'selected' : ''}>Factura (A-Z)</option><option value="total_desc" ${state.filtroPedidos.orden === 'total_desc' ? 'selected' : ''}>Mayor total</option><option value="total_asc" ${state.filtroPedidos.orden === 'total_asc' ? 'selected' : ''}>Menor total</option></select></div>
+            <div><label class="text-xs text-gray-500">Tipo de filtro por fecha</label><select id="tipoFiltroFechaPedidos" class="w-full border border-gray-300 rounded-lg p-2 text-sm"><option value="ninguno" ${state.filtroPedidos.tipoFiltro === 'ninguno' ? 'selected' : ''}>Sin filtro de fecha</option><option value="fecha" ${state.filtroPedidos.tipoFiltro === 'fecha' ? 'selected' : ''}>Fecha específica</option><option value="rango" ${state.filtroPedidos.tipoFiltro === 'rango' ? 'selected' : ''}>Rango de fechas</option></select></div>
+            <div id="divFechaPedidos">${state.filtroPedidos.tipoFiltro === 'fecha' ? `<div><label class="text-xs text-gray-500">Fecha</label><input type="date" id="fechaEspecificaPedidos" class="w-full border border-gray-300 rounded-lg p-2 text-sm" value="${state.filtroPedidos.fechaInicio}" onchange="aplicarFiltroPedidos()"></div>` : state.filtroPedidos.tipoFiltro === 'rango' ? `<div class="grid grid-cols-2 gap-2"><div><label class="text-xs text-gray-500">Desde</label><input type="date" id="fechaInicioPedidos" class="w-full border border-gray-300 rounded-lg p-2 text-sm" value="${state.filtroPedidos.fechaInicio}" onchange="aplicarFiltroPedidos()"></div><div><label class="text-xs text-gray-500">Hasta</label><input type="date" id="fechaFinPedidos" class="w-full border border-gray-300 rounded-lg p-2 text-sm" value="${state.filtroPedidos.fechaFin}" onchange="aplicarFiltroPedidos()"></div></div>` : ''}</div>
+          </div>
+        </div>
+        <div class="flex justify-between items-center">
+          <h2 class="font-bold text-lg">📋 Pedidos Pendientes (${pedidosPendientes.length})${pendientesSync > 0 ? ` <span class="text-amber-500 text-sm">(${pendientesSync} pendientes de sincronizar)</span>` : ''}</h2>
+          <button onclick="actualizarDatosRapido()" class="bg-blue-500 text-white px-3 py-1 rounded-lg text-sm hover:bg-blue-600 transition">
+            🔄 Actualizar
+          </button>
+        </div>
+        <div id="pedidosContainer">
+          ${renderOrdersList(pedidosPendientes)}
+        </div>
+      </div>
+    `;
+  }
+
+  // ==================== PANTALLA DE TRANSACCIONES ====================
+  function renderTransactions() {
+    const vendedores = ['TODOS', ...new Set(state.pedidos.map(p => p.nombre_vendedor).filter(v => v))];
+    const transaccionesFiltradas = filtrarOrdenarTransacciones();
+
+    return `
+      <div class="space-y-4">
+        <div class="bg-white rounded-xl p-4 shadow-sm border">
+          <h3 class="font-bold text-sm mb-3">🔍 Filtros Avanzados</h3>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div><label class="text-xs text-gray-500">Vendedor</label><select id="filtroVendedorTransacciones" class="w-full border border-gray-300 rounded-lg p-2 text-sm" onchange="aplicarFiltroTransacciones()">${vendedores.map(v => `<option value="${v}" ${state.filtroTransacciones.vendedor === v ? 'selected' : ''}>${v}</option>`).join('')}</select></div>
+            <div><label class="text-xs text-gray-500">Ordenar por</label><select id="filtroOrdenTransacciones" class="w-full border border-gray-300 rounded-lg p-2 text-sm" onchange="aplicarFiltroTransacciones()"><option value="fecha_desc" ${state.filtroTransacciones.orden === 'fecha_desc' ? 'selected' : ''}>Más reciente primero</option><option value="fecha_asc" ${state.filtroTransacciones.orden === 'fecha_asc' ? 'selected' : ''}>Más antiguo primero</option><option value="consecutivo_desc" ${state.filtroTransacciones.orden === 'consecutivo_desc' ? 'selected' : ''}>Factura (Z-A)</option><option value="consecutivo_asc" ${state.filtroTransacciones.orden === 'consecutivo_asc' ? 'selected' : ''}>Factura (A-Z)</option><option value="total_desc" ${state.filtroTransacciones.orden === 'total_desc' ? 'selected' : ''}>Mayor total</option><option value="total_asc" ${state.filtroTransacciones.orden === 'total_asc' ? 'selected' : ''}>Menor total</option></select></div>
+            <div><label class="text-xs text-gray-500">Tipo de filtro por fecha</label><select id="tipoFiltroFechaTransacciones" class="w-full border border-gray-300 rounded-lg p-2 text-sm"><option value="ninguno" ${state.filtroTransacciones.tipoFiltro === 'ninguno' ? 'selected' : ''}>Sin filtro de fecha</option><option value="fecha" ${state.filtroTransacciones.tipoFiltro === 'fecha' ? 'selected' : ''}>Fecha específica</option><option value="rango" ${state.filtroTransacciones.tipoFiltro === 'rango' ? 'selected' : ''}>Rango de fechas</option></select></div>
+            <div id="divFechaTransacciones">${state.filtroTransacciones.tipoFiltro === 'fecha' ? `<div><label class="text-xs text-gray-500">Fecha</label><input type="date" id="fechaEspecificaTransacciones" class="w-full border border-gray-300 rounded-lg p-2 text-sm" value="${state.filtroTransacciones.fechaInicio}" onchange="aplicarFiltroTransacciones()"></div>` : state.filtroTransacciones.tipoFiltro === 'rango' ? `<div class="grid grid-cols-2 gap-2"><div><label class="text-xs text-gray-500">Desde</label><input type="date" id="fechaInicioTransacciones" class="w-full border border-gray-300 rounded-lg p-2 text-sm" value="${state.filtroTransacciones.fechaInicio}" onchange="aplicarFiltroTransacciones()"></div><div><label class="text-xs text-gray-500">Hasta</label><input type="date" id="fechaFinTransacciones" class="w-full border border-gray-300 rounded-lg p-2 text-sm" value="${state.filtroTransacciones.fechaFin}" onchange="aplicarFiltroTransacciones()"></div></div>` : ''}</div>
+          </div>
+        </div>
+        <div class="flex justify-between items-center">
+          <h2 class="font-bold text-lg">💰 Transacciones Confirmadas (${transaccionesFiltradas.length})</h2>
+          <button onclick="actualizarDatosRapido()" class="bg-blue-500 text-white px-3 py-1 rounded-lg text-sm hover:bg-blue-600 transition">
+            🔄 Actualizar
+          </button>
+        </div>
+        <div id="transaccionesContainer">
+          ${renderTransactionsList(transaccionesFiltradas)}
+        </div>
+      </div>
+    `;
+  }
+
+  // ==================== PANTALLA DE CLIENTES ====================
+  function renderClients() {
+    return `
+      <div class="space-y-3">
+        <div class="flex gap-2"><input type="text" id="clientSearchInputClientes" placeholder="🔍 Buscar por nombre o teléfono..." class="flex-1 border border-gray-300 rounded-xl p-3 bg-white" autocomplete="off"><button onclick="openNewClientModal()" class="bg-teal-600 text-white px-5 rounded-xl font-bold">+ Nuevo</button></div>
+        <div id="clientListContainer">${state.clientes.map(c => `<div class="bg-white rounded-xl p-3 shadow-sm border flex justify-between items-center"><div><p class="font-bold">${c.nombre || 'Sin nombre'}</p><p class="text-xs text-gray-400">📞 ${c.telefono || 'Sin teléfono'}</p>${Number(c.saldo_por_cobrar) > 0 ? `<p class="text-xs text-orange-500 font-bold">💰 Saldo: $${Number(c.saldo_por_cobrar).toLocaleString()}</p>` : ''}</div><button onclick="verHistorialCliente(${c.id})" class="bg-gray-100 px-3 py-2 rounded-lg text-sm">Historial</button></div>`).join('')}</div>
+        ${state.clientes.length === 0 ? '<p class="text-center text-gray-400 py-8 bg-white rounded-xl">No hay clientes registrados</p>' : ''}
+      </div>
+    `;
+  }
+
+  // ==================== PANTALLA DE PRODUCTOS ====================
+  function renderProductsList() {
+    return `<div class="bg-white rounded-xl overflow-hidden shadow-sm border"><div class="overflow-x-auto"><table class="w-full text-sm"><thead class="bg-gray-50"><tr><th class="p-3 text-left font-bold">Código</th><th class="p-3 text-left font-bold">Producto</th><th class="p-3 text-right font-bold">Precio</th><th class="p-3 text-right font-bold">Stock</th><tr></thead><tbody>${state.productos.map(p => `<tr class="border-t"><td class="p-3 font-mono text-xs">${p.código}</td><td class="p-3">${p.nombre}</td><td class="p-3 text-right font-bold">$${Number(p.precio).toLocaleString()}</td><td class="p-3 text-right text-gray-500">${p.stock || 0}</td></tr>`).join('')}</tbody>}</table></div><div class="p-3 bg-gray-50 text-center text-xs text-gray-500 border-t">📊 Total: ${state.productos.length} productos</div></div>`;
+  }
+
+  // ==================== PANTALLA DE CONFIGURACIÓN ====================
+  function renderConfiguracion() {
+    const siguienteNumero = state.configNumeracion?.ultimoNumero + 1 || 1001;
+    const pendientesSync = state.pedidos.filter(p => p.es_provisional === true).length;
+
+    return `
+      <div class="space-y-4">
+        <div class="bg-white rounded-xl p-4 shadow-sm border">
+          <h3 class="font-bold text-lg mb-4 flex items-center gap-2">⚙️ Configuración de Numeración de Facturas</h3>
+          <div class="bg-teal-50 rounded-xl p-4 mb-4">
+            <p class="text-sm text-teal-700 mb-2">📄 Formato de factura: <strong class="font-mono">Número consecutivo (1000, 1001, 1002...)</strong></p>
+            <p class="text-sm text-teal-700">🔢 Próximo número de factura: <strong class="text-xl">${siguienteNumero}</strong></p>
+          </div>
+          <div class="border-t pt-4">
+            <p class="font-bold text-sm mb-2">✏️ Cambiar número inicial</p>
+            <div class="flex gap-2">
+              <input type="number" id="nuevoNumeroInicial" placeholder="Ej: 5000" class="flex-1 border border-gray-300 rounded-xl p-3 bg-white">
+              <button onclick="abrirModalConfiguracionNumeracion()" class="bg-teal-600 text-white px-5 rounded-xl font-bold">Cambiar</button>
+            </div>
+          </div>
+        </div>
+        <div class="bg-white rounded-xl p-4 shadow-sm border">
+          <h3 class="font-bold text-lg mb-4 flex items-center gap-2">🔄 Sincronización</h3>
+          <button onclick="actualizarDatosRapido()" class="w-full bg-blue-500 text-white py-3 rounded-xl font-bold hover:bg-blue-600 transition mb-2">
+            📊 Actualizar datos (rápido)
+          </button>
+          <button onclick="refreshDataCompleta()" class="w-full bg-green-500 text-white py-3 rounded-xl font-bold hover:bg-green-600 transition">
+            🔄 Recargar todos los datos (completo)
+          </button>
+          <button onclick="sincronizarDatosEnSegundoPlano()" class="w-full bg-orange-500 text-white py-3 rounded-xl font-bold hover:bg-orange-600 transition mb-2">
+            🔄 Sincronizar pedidos pendientes (${pendientesSync})
+          </button>
+          <p class="text-xs text-gray-400 text-center mt-2">"Actualizar datos" trae todos los datos de forma ligera</p>
+          ${state.ultimaActualizacion ? `<p class="text-xs text-gray-400 text-center mt-1">Última actualización: ${state.ultimaActualizacion.toLocaleTimeString()}</p>` : ''}
+          ${state.ultimaSincronizacion ? `<p class="text-xs text-gray-400 text-center">Última sincronización: ${state.ultimaSincronizacion.toLocaleTimeString()}</p>` : ''}
+        </div>
+        <div class="bg-white rounded-xl p-4 shadow-sm border">
+          <h3 class="font-bold text-lg mb-4">ℹ️ Información del Sistema</h3>
+          <div class="space-y-2 text-sm">
+            <p><strong>📦 Total Productos:</strong> ${state.productos.length}</p>
+            <p><strong>👥 Total Clientes:</strong> ${state.clientes.length}</p>
+            <p><strong>📋 Total Pedidos:</strong> ${state.pedidos.length}</p>
+            <p><strong>💰 Total Transacciones:</strong> ${state.pedidos.filter(p => p.estado === 'Confirmado').length}</p>
+            <p><strong>🔄 Pedidos pendientes de sincronizar:</strong> ${pendientesSync}</p>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  // ==================== FUNCIONES DE SELECCIÓN ====================
+  window.selectClientFromDropdown = (id, nombre, telefono) => {
+    state.selectedClient = { id, nombre, telefono };
+    state.selectedClientName = nombre;
+    const input = document.getElementById('clientSearchInputVender');
+    if (input) input.value = nombre;
+    const dropdown = document.getElementById('clientDropdownVender');
+    if (dropdown) dropdown.style.display = 'none';
+    render();
+  };
+
+  window.selectProductFromDropdown = (code) => {
+    state.selectedProduct = state.productos.find(p => p.código === code);
+    state.numValue = '0';
+    const input = document.getElementById('productSearchInputVender');
+    if (input) input.value = '';
+    const dropdown = document.getElementById('productDropdownVender');
+    if (dropdown) dropdown.style.display = 'none';
+    render();
+  };
+
+  window.clearSelectedClient = () => {
+    state.selectedClient = null;
+    state.selectedClientName = '';
+    const input = document.getElementById('clientSearchInputVender');
+    if (input) input.value = '';
+    render();
+  };
+
+  window.selectProduct = (code) => {
+    state.selectedProduct = state.productos.find(p => p.código === code);
+    state.numValue = '0';
+    render();
+  };
+
+  window.setCategory = (c) => {
+    state.selectedCategory = c;
+    render();
+  };
+
+  window.updateObservacion = (v) => {
+    state.observacion = v;
+  };
+
+  window.handleLogin = () => {
+    const email = document.getElementById('loginUser')?.value;
+    if (!email) { mostrarToast('Selecciona un usuario', 'error'); return; }
+    const user = state.usuarios.find(u => u.email === email);
+    if (user) { state.user = user; render(); }
+    else mostrarToast('Usuario no encontrado', 'error');
+  };
+
+  window.logout = () => { 
+    state.user = null; 
+    detenerSincronizacionAutomatica();
+    render(); 
+  };
+
+  window.setActiveTab = (tab) => {
+    if (state.hayNuevosDatos) {
+      state.hayNuevosDatos = false;
+    }
+    state.activeTab = tab;
+    state.showCart = false;
+    state.showPayment = false;
+    render();
+    setTimeout(() => actualizarBadgeNuevosDatos(), 100);
+    
+    // Si es la pestaña de inicio, refrescar datos
+    if (tab === 'inicio') {
+      refreshDataCompleta(true);
+    }
+  };
+
+  window.closeQuantityModal = () => { state.selectedProduct = null; render(); };
+
+  window.handleKeypad = (key) => {
+    if (key === 'del') state.numValue = state.numValue.length > 1 ? state.numValue.slice(0, -1) : '0';
+    else if (key === ',') { if (!state.numValue.includes('.')) state.numValue = state.numValue + '.'; }
+    else { let newVal = state.numValue === '0' ? key : state.numValue + key; if (parseFloat(newVal) >= 0) state.numValue = newVal; }
+    render();
+  };
+
+  window.addToCartFromModal = () => {
+    if (!state.selectedProduct) return;
+    let qty = parseFloat(state.numValue);
+    if (qty > 0) {
+      state.cart.push({ product: state.selectedProduct, quantity: qty, unitPrice: state.selectedProduct.precio, tempId: Date.now() + Math.random() });
+      state.selectedProduct = null;
+      render();
+    } else mostrarToast('Cantidad inválida', 'error');
+  };
+
+  window.updateCartPrice = (index, newPrice) => {
+    let price = parseFloat(newPrice);
+    if (!isNaN(price) && price > 0) { state.cart[index].unitPrice = price; render(); }
+    else mostrarToast('Precio inválido', 'error');
+  };
+
+  window.openCart = () => { state.showCart = true; render(); };
+  window.closeCart = () => { state.showCart = false; render(); };
+  window.removeFromCart = (idx) => { state.cart.splice(idx, 1); if (state.cart.length === 0) state.showCart = false; render(); };
+  window.openEditCart = (idx) => { state.editingCartIndex = idx; state.editQuantityValue = state.cart[idx].quantity.toString(); render(); };
+  window.closeEditCart = () => { state.editingCartIndex = null; render(); };
+
+  window.handleEditKeypad = (key) => {
+    if (key === 'del') state.editQuantityValue = state.editQuantityValue.length > 1 ? state.editQuantityValue.slice(0, -1) : '0';
+    else if (key === '.') { if (!state.editQuantityValue.includes('.')) state.editQuantityValue = state.editQuantityValue + '.'; }
+    else state.editQuantityValue = state.editQuantityValue === '0' ? key : state.editQuantityValue + key;
+    render();
+  };
+
+  window.saveEditCart = () => {
+    let qty = parseFloat(state.editQuantityValue);
+    if (qty > 0 && state.editingCartIndex !== null) { state.cart[state.editingCartIndex].quantity = qty; state.editingCartIndex = null; render(); }
+    else if (qty === 0 && state.editingCartIndex !== null) { state.cart.splice(state.editingCartIndex, 1); state.editingCartIndex = null; render(); }
+  };
+
+  window.openPayment = () => { state.showCart = false; state.showPayment = true; render(); };
+  window.closePayment = () => { state.showPayment = false; render(); };
+  window.openNewClientModal = () => { state.showNewClientModal = true; render(); };
+  window.closeNewClientModal = () => { state.showNewClientModal = false; render(); };
+
+  // ==================== FILTROS ====================
+  window.aplicarFiltroPedidos = () => {
+    const vendedor = document.getElementById('filtroVendedorPedidos')?.value || 'TODOS';
+    const orden = document.getElementById('filtroOrdenPedidos')?.value || 'fecha_desc';
+    const tipo = document.getElementById('tipoFiltroFechaPedidos')?.value || 'ninguno';
+    let fechaInicio = '', fechaFin = '';
+    if (tipo === 'fecha') fechaInicio = document.getElementById('fechaEspecificaPedidos')?.value || '';
+    else if (tipo === 'rango') { fechaInicio = document.getElementById('fechaInicioPedidos')?.value || ''; fechaFin = document.getElementById('fechaFinPedidos')?.value || ''; }
+    state.filtroPedidos = { vendedor, orden, tipoFiltro: tipo, fechaInicio, fechaFin };
+    render();
+  };
+
+  window.aplicarFiltroTransacciones = () => {
+    const vendedor = document.getElementById('filtroVendedorTransacciones')?.value || 'TODOS';
+    const orden = document.getElementById('filtroOrdenTransacciones')?.value || 'fecha_desc';
+    const tipo = document.getElementById('tipoFiltroFechaTransacciones')?.value || 'ninguno';
+    let fechaInicio = '', fechaFin = '';
+    if (tipo === 'fecha') fechaInicio = document.getElementById('fechaEspecificaTransacciones')?.value || '';
+    else if (tipo === 'rango') { fechaInicio = document.getElementById('fechaInicioTransacciones')?.value || ''; fechaFin = document.getElementById('fechaFinTransacciones')?.value || ''; }
+    state.filtroTransacciones = { vendedor, orden, tipoFiltro: tipo, fechaInicio, fechaFin };
+    render();
+  };
+
+  // ==================== FUNCIONES DE EVENTOS ====================
+  function setupFilterEvents() {
+    if (state.activeTab === 'pedidos') {
+      const tipoSelect = document.getElementById('tipoFiltroFechaPedidos');
+      if (tipoSelect) {
+        tipoSelect.addEventListener('change', () => {
+          const tipo = tipoSelect.value;
+          const divFecha = document.getElementById('divFechaPedidos');
+          if (tipo === 'fecha') divFecha.innerHTML = `<div><label class="text-xs text-gray-500">Fecha</label><input type="date" id="fechaEspecificaPedidos" class="w-full border border-gray-300 rounded-lg p-2 text-sm" onchange="aplicarFiltroPedidos()"></div>`;
+          else if (tipo === 'rango') divFecha.innerHTML = `<div class="grid grid-cols-2 gap-2"><div><label class="text-xs text-gray-500">Desde</label><input type="date" id="fechaInicioPedidos" class="w-full border border-gray-300 rounded-lg p-2 text-sm" onchange="aplicarFiltroPedidos()"></div><div><label class="text-xs text-gray-500">Hasta</label><input type="date" id="fechaFinPedidos" class="w-full border border-gray-300 rounded-lg p-2 text-sm" onchange="aplicarFiltroPedidos()"></div></div>`;
+          else divFecha.innerHTML = '';
+          state.filtroPedidos.tipoFiltro = tipo;
+          aplicarFiltroPedidos();
+        });
+      }
+    }
+    if (state.activeTab === 'transacciones') {
+      const tipoSelect = document.getElementById('tipoFiltroFechaTransacciones');
+      if (tipoSelect) {
+        tipoSelect.addEventListener('change', () => {
+          const tipo = tipoSelect.value;
+          const divFecha = document.getElementById('divFechaTransacciones');
+          if (tipo === 'fecha') divFecha.innerHTML = `<div><label class="text-xs text-gray-500">Fecha</label><input type="date" id="fechaEspecificaTransacciones" class="w-full border border-gray-300 rounded-lg p-2 text-sm" onchange="aplicarFiltroTransacciones()"></div>`;
+          else if (tipo === 'rango') divFecha.innerHTML = `<div class="grid grid-cols-2 gap-2"><div><label class="text-xs text-gray-500">Desde</label><input type="date" id="fechaInicioTransacciones" class="w-full border border-gray-300 rounded-lg p-2 text-sm" onchange="aplicarFiltroTransacciones()"></div><div><label class="text-xs text-gray-500">Hasta</label><input type="date" id="fechaFinTransacciones" class="w-full border border-gray-300 rounded-lg p-2 text-sm" onchange="aplicarFiltroTransacciones()"></div></div>`;
+          else divFecha.innerHTML = '';
+          state.filtroTransacciones.tipoFiltro = tipo;
+          aplicarFiltroTransacciones();
+        });
+      }
+    }
+  }
+
+  function setupClientSearchEvents() {
+    const input = document.getElementById('clientSearchInputVender');
+    if (!input) return;
+    const updateDropdown = () => {
+      const searchText = input.value.toLowerCase();
+      const filtered = state.clientes.filter(c =>
+        (c.nombre || '').toLowerCase().includes(searchText) ||
+        (c.telefono || '').includes(searchText)
+      ).slice(0, 8);
+      const dropdown = document.getElementById('clientDropdownVender');
+      if (dropdown && searchText.length > 0 && filtered.length > 0) {
+        dropdown.innerHTML = filtered.map(c => `
+          <button onclick="selectClientFromDropdown(${c.id}, '${c.nombre.replace(/'/g, "\\'")}', '${(c.telefono || '').replace(/'/g, "\\'")}')" class="w-full text-left p-3 hover:bg-gray-50 border-b last:border-b-0">
+            <div class="font-medium">${c.nombre}</div>
+            <div class="text-xs text-gray-400">📞 ${c.telefono || 'Sin teléfono'}</div>
+          </button>
+        `).join('');
+        dropdown.style.display = 'block';
+      } else if (dropdown) dropdown.style.display = 'none';
+    };
+    input.addEventListener('input', updateDropdown);
+    input.addEventListener('focus', updateDropdown);
+    document.addEventListener('click', (e) => {
+      const dropdown = document.getElementById('clientDropdownVender');
+      if (dropdown && !input.contains(e.target) && !dropdown.contains(e.target)) dropdown.style.display = 'none';
+    });
+  }
+
+  function setupProductSearchEvents() {
+    const input = document.getElementById('productSearchInputVender');
+    if (!input) return;
+    const updateDropdown = () => {
+      const searchText = input.value.toLowerCase();
+      const filtered = state.productos.filter(p =>
+        (p.nombre || '').toLowerCase().includes(searchText) ||
+        (p.código || '').toLowerCase().includes(searchText)
+      ).slice(0, 10);
+      const dropdown = document.getElementById('productDropdownVender');
+      if (dropdown && searchText.length > 0 && filtered.length > 0) {
+        dropdown.innerHTML = filtered.map(p => `
+          <button onclick="selectProductFromDropdown('${p.código}')" class="w-full text-left p-3 hover:bg-gray-50 border-b last:border-b-0">
+            <div class="flex justify-between"><span class="font-medium">${p.nombre}</span><span class="text-teal-600 font-bold">$${Number(p.precio).toLocaleString()}</span></div>
+            <div class="flex justify-between text-xs text-gray-400 mt-1"><span>Cód: ${p.código}</span><span>📦 Stock: ${p.stock || 0}</span></div>
+          </button>
+        `).join('');
+        dropdown.style.display = 'block';
+      } else if (dropdown) dropdown.style.display = 'none';
+    };
+    input.addEventListener('input', updateDropdown);
+    input.addEventListener('focus', updateDropdown);
+    document.addEventListener('click', (e) => {
+      const dropdown = document.getElementById('productDropdownVender');
+      if (dropdown && !input.contains(e.target) && !dropdown.contains(e.target)) dropdown.style.display = 'none';
+    });
+  }
+
+  function setupClientListSearchEvents() {
+    const input = document.getElementById('clientSearchInputClientes');
+    if (!input) return;
+    const filterList = () => {
+      const searchText = input.value.toLowerCase();
+      const container = document.getElementById('clientListContainer');
+      if (!container) return;
+      const filtered = state.clientes.filter(c =>
+        (c.nombre || '').toLowerCase().includes(searchText) ||
+        (c.telefono || '').includes(searchText)
+      );
+      if (filtered.length === 0) container.innerHTML = '<p class="text-center text-gray-400 py-8 bg-white rounded-xl">No se encontraron clientes</p>';
+      else {
+        container.innerHTML = filtered.map(c => `
+          <div class="bg-white rounded-xl p-3 shadow-sm border flex justify-between items-center">
+            <div><p class="font-bold">${c.nombre || 'Sin nombre'}</p><p class="text-xs text-gray-400">📞 ${c.telefono || 'Sin teléfono'}</p>${Number(c.saldo_por_cobrar) > 0 ? `<p class="text-xs text-orange-500 font-bold">💰 Saldo: $${Number(c.saldo_por_cobrar).toLocaleString()}</p>` : ''}</div>
+            <button onclick="verHistorialCliente(${c.id})" class="bg-gray-100 px-3 py-2 rounded-lg text-sm">Historial</button>
+          </div>
+        `).join('');
+      }
+    };
+    input.addEventListener('input', filterList);
+  }
+
+  function setupEditClientSearch() {
+    const input = document.getElementById('editClientSearch');
+    if (!input) return;
+    const updateDropdown = () => {
+      const searchText = input.value.toLowerCase();
+      const filtered = state.clientes.filter(c => (c.nombre || '').toLowerCase().includes(searchText)).slice(0, 8);
+      const dropdown = document.getElementById('editClientDropdown');
+      if (dropdown && searchText.length > 0 && filtered.length > 0) { dropdown.innerHTML = filtered.map(c => `<button onclick="selectEditClient(${c.id}, '${c.nombre.replace(/'/g, "\\'")}', '${(c.telefono || '').replace(/'/g, "\\'")}')" class="w-full text-left p-3 hover:bg-gray-50 border-b last:border-b-0"><div class="font-medium">${c.nombre}</div><div class="text-xs text-gray-400">📞 ${c.telefono || 'Sin teléfono'}</div></button>`).join(''); dropdown.style.display = 'block'; } else if (dropdown) dropdown.style.display = 'none';
+    };
+    input.removeEventListener('input', updateDropdown);
+    input.addEventListener('input', updateDropdown);
+    input.addEventListener('focus', updateDropdown);
+    document.removeEventListener('click', window._closeClientDropdown);
+    window._closeClientDropdown = (e) => { const dropdown = document.getElementById('editClientDropdown'); if (dropdown && !input.contains(e.target) && !dropdown.contains(e.target)) dropdown.style.display = 'none'; };
+    document.addEventListener('click', window._closeClientDropdown);
+  }
+
+  function setupEditProductSearch() {
+    const input = document.getElementById('editProductSearch');
+    if (!input) return;
+    const updateDropdown = () => {
+      const searchText = input.value.toLowerCase();
+      const filtered = state.productos.filter(p => (p.nombre || '').toLowerCase().includes(searchText) || (p.código || '').toLowerCase().includes(searchText)).slice(0, 10);
+      const dropdown = document.getElementById('editProductDropdown');
+      if (dropdown && searchText.length > 0 && filtered.length > 0) { dropdown.innerHTML = filtered.map(p => `<button onclick="addProductToEditCart('${p.código}')" class="w-full text-left p-3 hover:bg-gray-50 border-b last:border-b-0"><div class="flex justify-between items-center"><div><div class="font-medium">${p.nombre}</div><div class="text-xs text-gray-400">Cód: ${p.código} | Stock: ${p.stock || 0}</div></div><div class="text-teal-600 font-bold text-lg">$${Number(p.precio).toLocaleString()}</div></div></button>`).join(''); dropdown.style.display = 'block'; } else if (dropdown) dropdown.style.display = 'none';
+    };
+    input.removeEventListener('input', updateDropdown);
+    input.addEventListener('input', updateDropdown);
+    input.addEventListener('focus', updateDropdown);
+    document.removeEventListener('click', window._closeProductDropdown);
+    window._closeProductDropdown = (e) => { const dropdown = document.getElementById('editProductDropdown'); if (dropdown && !input.contains(e.target) && !dropdown.contains(e.target)) dropdown.style.display = 'none'; };
+    document.addEventListener('click', window._closeProductDropdown);
+  }
+
+  // ==================== FUNCIONES DE IMPRESIÓN ====================
+  function conectarImpresoraAdelantado() {
+    if (!URL_IMPRESORA_BLUETOOTH || URL_IMPRESORA_BLUETOOTH.includes('santiagot4.github.io/1----IMPRIMIR-')) {
+      mostrarToast('⚠️ Configura primero la URL de GitHub Pages', 'error');
+      return false;
+    }
+    const ventana = window.open(URL_IMPRESORA_BLUETOOTH + '?modo=conectar', '_blank', 'width=450,height=550,menubar=no,toolbar=no,location=no');
+    if (!ventana) {
+      mostrarToast('⚠️ Permite ventanas emergentes', 'error');
+      return false;
+    }
+    impresoraPreConectada = true;
+    mostrarToast('🔌 Ventana de conexión abierta', 'info');
+    return true;
+  }
+
+  function imprimirPorBluetooth(datosVenta) {
+    if (!URL_IMPRESORA_BLUETOOTH || URL_IMPRESORA_BLUETOOTH.includes('santiagot4.github.io/1----IMPRIMIR-')) {
+      mostrarToast('⚠️ Impresión no configurada', 'error');
+      return false;
+    }
+    const params = new URLSearchParams();
+    params.append('factura', datosVenta.numeroFactura);
+    params.append('cliente', datosVenta.nombre_cliente || 'Consumidor Final');
+    params.append('total', datosVenta.total);
+    params.append('fecha', datosVenta.fecha || new Date().toLocaleString());
+    params.append('productos', JSON.stringify(datosVenta.productos));
+    if (datosVenta.comentario) params.append('comentario', datosVenta.comentario);
+    if (impresoraPreConectada) params.append('auto', '1');
+    const ventana = window.open(URL_IMPRESORA_BLUETOOTH + '?' + params.toString(), '_blank', 'width=450,height=650,menubar=no,toolbar=no,location=no');
+    if (!ventana) {
+      mostrarToast('⚠️ Permite ventanas emergentes', 'error');
+      return false;
+    }
+    return true;
+  }
+
+  function imprimirInstrucciones() {
+    conectarImpresoraAdelantado();
+    setTimeout(() => mostrarToast('📄 Sigue los pasos en la ventana abierta', 'info'), 500);
+  }
+
+  window.imprimirPedido = (pedidoId) => {
+    const order = state.pedidos.find(p => p.id_pedido === pedidoId);
+    const detalles = state.detalles_pedido.filter(d => d.id_pedido === pedidoId);
+    if (order && detalles) {
+      const numFactura = getNumeroFactura(order);
+      const datosVenta = {
+        numeroFactura: numFactura,
+        nombre_cliente: order.nombre_cliente,
+        total: order.total,
+        productos: detalles.map(d => ({
+          nombre: d.nombre_producto,
+          cantidad: d.cantidad,
+          precio_unitario: d.precio_unitario,
+          subtotal: d.subtotal
+        })),
+        fecha: formatFecha(order.fecha),
+        comentario: order.observacion || ''
+      };
+      imprimirPorBluetooth(datosVenta);
+    }
+  };
+
+  // ==================== FUNCIONES DE SISTEMA DE ABONOS ====================
+  function irASistemaAbonos() {
+    window.open(URL_SISTEMA_ABONOS, '_blank', 'width=850,height=650,menubar=no,toolbar=no,location=no');
+  }
+
+  // ==================== FUNCIONES DE DETALLES Y EDICIÓN ====================
+  window.verDetallePedido = (id) => {
+    if (state.hayNuevosDatos) {
+      state.hayNuevosDatos = false;
+      actualizarBadgeNuevosDatos();
+    }
+    state.selectedOrderId = id;
+    state.showOrderDetail = true;
+    render();
+  };
+
+  window.closeOrderDetail = () => { state.showOrderDetail = false; render(); };
+  window.closePrintModal = () => { state.showPrintModal = false; render(); };
+
+  window.verHistorialCliente = (id) => {
+    state.selectedClientForHistory = state.clientes.find(c => Number(c.id) === Number(id));
+    state.showClientHistory = true;
+    render();
+  };
+
+  window.closeClientHistory = () => { state.showClientHistory = false; render(); };
+
+  // ==================== SAVE NEW CLIENT ====================
+  window.saveNewClient = () => {
+    const name = document.getElementById('newClientName')?.value;
+    const phone = document.getElementById('newClientPhone')?.value;
+    if (!name) {
+      mostrarToast('Ingrese un nombre', 'error');
+      return;
+    }
+    setButtonLoading('registrarVenta', true);
+
+    callAppScriptPOST('crearClienteRapido', { nombre: name, telefono: phone || '' })
+      .then(() => {
+        setButtonLoading('registrarVenta', false);
+        const clienteParaAgregar = {
+          id: state.clientes.length + 1,
+          nombre: name,
+          telefono: phone || '',
+          saldo_por_cobrar: 0
+        };
+        state.clientes.push(clienteParaAgregar);
+        closeNewClientModal();
+        mostrarToast(`✅ Cliente "${name}" creado exitosamente`, 'success');
+        render();
+        refreshDataCompleta(true);
+      })
+      .catch(error => {
+        setButtonLoading('registrarVenta', false);
+        mostrarToast('Error al crear cliente: ' + error.message, 'error');
+      });
+  };
+
+  // ==================== COMPLETE SALE ====================
+  window.completeSale = () => {
+    const cartTotal = state.cart.reduce((s, i) => s + ((i.unitPrice || i.product.precio) * i.quantity), 0);
+    const observacionFinal = document.getElementById('observacionFinal')?.value || state.observacion;
+    let clientId = '130505237', clientName = '(237) Punto De Venta';
+    if (state.selectedClient) { clientId = state.selectedClient.id; clientName = state.selectedClient.nombre; }
+
+    const numeroFacturaLocal = calcularSiguienteNumeroFacturaLocal();
+    const numeroFacturaFormateado = `Supuesto(${numeroFacturaLocal})`;
+
+    const productosVendidos = state.cart.map(item => ({
+        codigo_producto: item.product.código,
+        cantidad: item.quantity
+    }));
+
+    let ciudadCliente = '';
+    if (state.selectedClient) {
+      const cliente = state.clientes.find(c => c.id === state.selectedClient.id);
+      ciudadCliente = cliente?.ciudad || '';
+    }
+
+    const order = {
+        fecha: new Date().toISOString(),
+        id_cliente: clientId,
+        nombre_cliente: clientName,
+        id_vendedor: state.user?.id || '1',
+        nombre_vendedor: state.user?.nombre || 'Admin',
+        total: cartTotal,
+        estado: 'Pendiente',
+        observacion: observacionFinal,
+        total_productos: state.cart.length,
+        numero_factura: numeroFacturaFormateado,
+        ciudad: ciudadCliente
+    };
+
+    const details = state.cart.map((item, idx) => ({
+        id_detail: 'TEMP-' + Date.now() + '-' + idx,
+        id_pedido: 'TEMPORAL',
+        codigo_producto: item.product.código,
+        nombre_producto: item.product.nombre,
+        cantidad: item.quantity,
+        precio_unitario: item.unitPrice || item.product.precio,
+        subtotal: (item.unitPrice || item.product.precio) * item.quantity
+    }));
+
+    const idPedidoTemporal = 'LOCAL-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
+    const nuevoPedidoLocal = {
+        id_pedido: idPedidoTemporal,
+        numero_factura: numeroFacturaFormateado,
+        fecha: order.fecha,
+        id_cliente: clientId,
+        nombre_cliente: clientName,
+        id_vendedor: order.id_vendedor,
+        nombre_vendedor: order.nombre_vendedor,
+        total: cartTotal,
+        estado: 'Pendiente',
+        observacion: observacionFinal,
+        total_productos: state.cart.length,
+        ciudad: ciudadCliente,
+        es_provisional: true
+    };
+
+    const nuevosDetallesLocales = details.map((d, idx) => ({
+        id_detail: `${idPedidoTemporal}-${idx}`,
+        id_pedido: idPedidoTemporal,
+        codigo_producto: d.codigo_producto,
+        nombre_producto: d.nombre_producto,
+        cantidad: d.cantidad,
+        precio_unitario: d.precio_unitario,
+        subtotal: d.subtotal
+    }));
+
+    // ===== PASO 1: GUARDAR LOCALMENTE =====
+    state.pedidos.unshift(nuevoPedidoLocal);
+    state.detalles_pedido.push(...nuevosDetallesLocales);
+
+    // ===== PASO 2: DESCONTAR STOCK LOCALMENTE =====
+    for (const item of productosVendidos) {
+        const productoIndex = state.productos.findIndex(p => p.código === item.codigo_producto);
+        if (productoIndex !== -1) {
+            state.productos[productoIndex].stock = Math.max(0, (state.productos[productoIndex].stock || 0) - item.cantidad);
+        }
+    }
+
+    const cartItemsCopy = [...state.cart];
+    state.cart = [];
+    state.showPayment = false;
+    state.selectedClient = null;
+    state.selectedClientName = '';
+    state.observacion = '';
+
+    render();
+    mostrarToast(`✔️ Factura ${numeroFacturaFormateado} - $${cartTotal.toLocaleString()} (guardada localmente)`, 'success');
+
+    // ===== PASO 3: ENVIAR A GOOGLE EN SEGUNDO PLANO =====
+    setButtonLoading('registrarVenta', true);
+
+    const orderParaEnviar = {
+        fecha: order.fecha,
+        id_cliente: clientId,
+        nombre_cliente: clientName,
+        id_vendedor: state.user?.id || '1',
+        nombre_vendedor: state.user?.nombre || 'Admin',
+        total: cartTotal,
+        estado: 'Pendiente',
+        observacion: observacionFinal,
+        total_productos: cartItemsCopy.length
+    };
+
+    const detallesParaEnviar = cartItemsCopy.map((item, idx) => ({
+        id_detail: 'TEMP-' + Date.now() + '-' + idx,
+        id_pedido: 'TEMPORAL',
+        codigo_producto: item.product.código,
+        nombre_producto: item.product.nombre,
+        cantidad: item.quantity,
+        precio_unitario: item.unitPrice || item.product.precio,
+        subtotal: (item.unitPrice || item.product.precio) * item.quantity
+    }));
+
+    callAppScriptPOST('registrarVenta', { 
+      payload: JSON.stringify({
+        order: orderParaEnviar,
+        details: detallesParaEnviar,
+        idPedidoTemporal: idPedidoTemporal,
+        numeroProvisional: numeroFacturaLocal
+      })
+    })
+    .then(() => {
+      setButtonLoading('registrarVenta', false);
+      
+      // Actualizar el pedido local
+      const pedidoIndex = state.pedidos.findIndex(p => p.id_pedido === idPedidoTemporal);
+      if (pedidoIndex !== -1) {
+        state.pedidos[pedidoIndex].es_provisional = false;
+        state.pedidos[pedidoIndex].sincronizado = true;
+        state.pedidos[pedidoIndex].error_sincronizacion = false;
+      }
+      
+      mostrarToast(`✅ Factura sincronizada con Google`, 'success');
+      
+      // Recargar datos para obtener el número de factura oficial
+      refreshDataCompleta(true);
+      render();
+
+      if (impresoraPreConectada) {
+        const datosVenta = {
+          numeroFactura: numeroFacturaLocal,
+          nombre_cliente: clientName,
+          total: cartTotal,
+          productos: detallesParaEnviar.map(d => ({
+            nombre: d.nombre_producto,
+            cantidad: d.cantidad,
+            precio_unitario: d.precio_unitario,
+            subtotal: d.subtotal
+          })),
+          fecha: new Date().toLocaleString(),
+          comentario: observacionFinal
+        };
+        imprimirPorBluetooth(datosVenta);
+      }
+    })
+    .catch(error => {
+      setButtonLoading('registrarVenta', false);
+      const pedidoIndex = state.pedidos.findIndex(p => p.id_pedido === idPedidoTemporal);
+      if (pedidoIndex !== -1) {
+        state.pedidos[pedidoIndex].error_sincronizacion = true;
+        state.pedidos[pedidoIndex].mensaje_error = error.message || 'Error al sincronizar';
+      }
+      mostrarToast('⚠️ Error al sincronizar: ' + (error.message || 'Error desconocido') + ' (el pedido quedó guardado localmente)', 'warning');
+      render();
+    });
+  };
+
+  // ==================== CONFIRMAR PEDIDO ====================
+  window.confirmarPedido = (id) => {
+    setButtonLoading('confirmarPedido', true);
+    
+    callAppScriptPOST('actualizarEstadoPedido', { pedidoId: id, nuevoEstado: 'Confirmado' })
+      .then(() => {
+        setButtonLoading('confirmarPedido', false);
+        const pedidoIndex = state.pedidos.findIndex(p => p.id_pedido === id);
+        if (pedidoIndex !== -1) {
+          state.pedidos[pedidoIndex].estado = 'Confirmado';
+        }
+        render();
+        mostrarToast('✅ Pedido confirmado', 'success');
+        refreshDataCompleta(true);
+      })
+      .catch(error => {
+        setButtonLoading('confirmarPedido', false);
+        mostrarToast('Error al confirmar: ' + error.message, 'error');
+      });
+  };
+
+  // ==================== ELIMINAR PEDIDO ====================
+  window.eliminarPedidoDesdeEdicion = (pedidoId) => {
+    if (confirm('⚠️ ¿Estás seguro de eliminar este pedido?')) {
+      setButtonLoading('eliminarPedido', true);
+      
+      callAppScriptPOST('eliminarPedido', { pedidoId: pedidoId })
+        .then(() => {
+          setButtonLoading('eliminarPedido', false);
+          state.pedidos = state.pedidos.filter(p => p.id_pedido !== pedidoId);
+          state.detalles_pedido = state.detalles_pedido.filter(d => d.id_pedido !== pedidoId);
+          mostrarToast('✅ Pedido eliminado', 'success');
+          closeEditOrderModal();
+          render();
+          refreshDataCompleta(true);
+        })
+        .catch(error => {
+          setButtonLoading('eliminarPedido', false);
+          mostrarToast('Error: ' + error.message, 'error');
+        });
+    }
+  };
+
+  // ==================== FUNCIONES DE EDICIÓN DE PEDIDOS ====================
+  window.selectEditClient = (id, nombre, telefono) => { state.editSelectedClient = { id, nombre, telefono }; const input = document.getElementById('editClientSearch'); if (input) input.value = nombre; const dropdown = document.getElementById('editClientDropdown'); if (dropdown) dropdown.style.display = 'none'; render(); };
+  window.openNewClientModalFromEdit = () => { state.showNewClientModal = true; state.newClientCallback = (client) => { state.editSelectedClient = client; const input = document.getElementById('editClientSearch'); if (input) input.value = client.nombre; }; render(); };
+  window.addProductToEditCart = (code) => { const product = state.productos.find(p => p.código === code); if (product) { state.editSelectedProduct = product; state.editNumValue = '1'; state.showEditQuantityModal = true; const input = document.getElementById('editProductSearch'); if (input) input.value = ''; const dropdown = document.getElementById('editProductDropdown'); if (dropdown) dropdown.style.display = 'none'; render(); } };
+  window.openEditQuantityModal = (idx) => { state.editingEditCartIndex = idx; state.editNumValue = state.editCart[idx].quantity.toString(); state.showEditQuantityModal = true; render(); };
+  window.handleEditQuantityKeypad = (key) => { if (key === 'del') state.editNumValue = state.editNumValue.length > 1 ? state.editNumValue.slice(0, -1) : '0'; else if (key === '.') { if (!state.editNumValue.includes('.')) state.editNumValue = state.editNumValue + '.'; } else { let newVal = state.editNumValue === '0' ? key : state.editNumValue + key; if (parseFloat(newVal) <= 999999) state.editNumValue = newVal; } render(); };
+  window.saveEditQuantity = () => { let qty = parseFloat(state.editNumValue); if (isNaN(qty) || qty <= 0) { mostrarToast('Cantidad inválida', 'error'); return; } if (state.editSelectedProduct) { state.editCart.push({ product: state.editSelectedProduct, quantity: qty, unitPrice: state.editSelectedProduct.precio, tempId: Date.now() + Math.random() }); state.editSelectedProduct = null; } else if (state.editingEditCartIndex !== null) { state.editCart[state.editingEditCartIndex].quantity = qty; state.editingEditCartIndex = null; } state.showEditQuantityModal = false; render(); };
+  window.closeEditQuantityModal = () => { state.showEditQuantityModal = false; state.editSelectedProduct = null; state.editingEditCartIndex = null; render(); };
+  window.updateEditCartPrice = (index, newPrice) => { let price = parseFloat(newPrice); if (!isNaN(price) && price > 0) { state.editCart[index].unitPrice = price; render(); } else mostrarToast('Precio inválido', 'error'); };
+  window.removeFromEditCart = (idx) => { if (confirm('¿Eliminar este producto del pedido?')) { state.editCart.splice(idx, 1); render(); } };
+
+  window.guardarEdicionPedido = () => {
+    if (state.editCart.length === 0) {
+      mostrarToast('El pedido debe tener al menos un producto', 'error');
+      return;
+    }
+    const newTotal = state.editCart.reduce((s, i) => s + ((i.unitPrice || i.product.precio) * i.quantity), 0);
+    const clienteId = state.editSelectedClient?.id || state.editingOrder.id_cliente;
+    const clienteNombre = state.editSelectedClient?.nombre || state.editingOrder.nombre_cliente;
+    const observacion = document.getElementById('editObservacionOrder')?.value || state.editObservacion;
+    const updatedOrder = {
+      id_pedido: state.editingOrder.id_pedido,
+      fecha: state.editingOrder.fecha,
+      id_cliente: clienteId,
+      nombre_cliente: clienteNombre,
+      id_vendedor: state.editingOrder.id_vendedor,
+      nombre_vendedor: state.editingOrder.nombre_vendedor,
+      total: newTotal,
+      estado: state.editingOrder.estado,
+      medio_pago: state.editingOrder.medio_pago || 'Efectivo',
+      observacion: observacion,
+      numero_factura: state.editingOrder.numero_factura,
+      total_productos: state.editCart.length
+    };
+    const newDetails = state.editCart.map((item, idx) => ({
+      id_detail: `${state.editingOrder.id_pedido}-${idx}-${Date.now()}`,
+      id_pedido: state.editingOrder.id_pedido,
+      codigo_producto: item.product.código,
+      nombre_producto: item.product.nombre,
+      cantidad: item.quantity,
+      precio_unitario: item.unitPrice || item.product.precio,
+      subtotal: (item.unitPrice || item.product.precio) * item.quantity
+    }));
+    const payload = { orderId: state.editingOrder.id_pedido, order: updatedOrder, details: newDetails, oldDetails: state.editingOrderDetails };
+    
+    setButtonLoading('editarPedido', true);
+    
+    callAppScriptPOST('editarPedido', { payload: JSON.stringify(payload) })
+      .then(() => {
+        setButtonLoading('editarPedido', false);
+        actualizarPedidoLocalmente(updatedOrder, newDetails);
+        mostrarToast('✅ Pedido editado exitosamente', 'success');
+        closeEditOrderModal();
+        render();
+        refreshDataCompleta(true);
+      })
+      .catch(error => {
+        setButtonLoading('editarPedido', false);
+        mostrarToast('Error al guardar: ' + error.message, 'error');
+      });
+  };
+
+  window.closeEditOrderModal = () => {
+    state.showEditOrderModal = false;
+    state.editingOrder = null;
+    state.editingOrderDetails = [];
+    state.editingOrderOldData = null;
+    state.editCart = [];
+    state.editSelectedClient = null;
+    state.editSelectedProduct = null;
+    state.editingEditCartIndex = null;
+    state.showEditQuantityModal = false;
+    render();
+  };
+
+  window.abrirEditarPedido = (id) => {
+    const order = state.pedidos.find(p => p.id_pedido === id);
+    const details = state.detalles_pedido.filter(d => d.id_pedido === id);
+    if (!order) {
+      mostrarToast('Pedido no encontrado', 'error');
+      return;
+    }
+    if (order.estado !== 'Pendiente') {
+      mostrarToast('Solo se pueden editar pedidos en estado "Pendiente"', 'error');
+      return;
+    }
+    if (order.es_provisional) {
+      mostrarToast('Los pedidos provisionales no se pueden editar. Espera a que se sincronicen.', 'warning');
+      return;
+    }
+    state.editingOrder = order;
+    state.editingOrderDetails = [...details];
+    state.editingOrderOldData = JSON.parse(JSON.stringify(order));
+    state.editCart = details.map(d => ({
+      product: {
+        código: d.codigo_producto,
+        nombre: d.nombre_producto,
+        precio: d.precio_unitario
+      },
+      quantity: d.cantidad,
+      unitPrice: d.precio_unitario
+    }));
+    state.editObservacion = order.observacion || '';
+    state.editSelectedClient = { id: order.id_cliente, nombre: order.nombre_cliente };
+    state.showEditOrderModal = true;
+    render();
+  };
+
+  // ==================== SISTEMA DE CLAVES PARA REVERTIR TRANSACCIONES ====================
+  window.solicitarEdicionTransaccion = (idPedido) => {
+    transaccionIdActual = idPedido;
+    mostrarModalClaveTransaccion();
+  };
+
+  function mostrarModalClaveTransaccion() {
+    const order = state.pedidos.find(p => p.id_pedido === transaccionIdActual);
+    const facturaNumero = getNumeroFactura(order) || transaccionIdActual;
+
+    const modalHtml = `
+      <div id="modalClaveTransaccion" class="fixed inset-0 bg-black/50 flex items-center justify-center z-[1000] p-4">
+        <div class="bg-white rounded-xl max-w-2xl w-full shadow-2xl max-h-[90vh] overflow-auto">
+          <div class="p-4 border-b bg-teal-600 text-white rounded-t-xl sticky top-0">
+            <h3 class="font-bold text-lg">🔐 Revertir Factura #${facturaNumero} a Pendiente</h3>
+          </div>
+          <div class="p-4">
+            <div id="claveMensajeArea" class="mb-3 text-sm"></div>
+
+            <button id="btnEnviarClave" onclick="enviarClaveTransaccion()"
+                    class="w-full bg-teal-600 text-white py-3 rounded-xl font-bold mb-4 hover:bg-teal-700 transition">
+              📧 ENVIAR CLAVE DE AUTORIZACIÓN
+            </button>
+
+            <div class="relative my-4">
+              <div class="absolute inset-0 flex items-center"><div class="w-full border-t border-gray-300"></div></div>
+              <div class="relative flex justify-center text-sm"><span class="px-2 bg-white text-gray-500">O ingresa la clave</span></div>
+            </div>
+
+            <input type="text" id="claveTransaccion"
+                   placeholder="Clave de 6 dígitos"
+                   class="w-full border border-gray-300 rounded-xl p-3 text-center text-2xl tracking-widest uppercase mb-4"
+                   maxlength="6" autocomplete="off">
+
+            <div class="flex gap-3 mb-4">
+              <button onclick="validarClaveTransaccion()" class="flex-1 bg-teal-600 text-white py-2 rounded-lg font-bold hover:bg-teal-700 transition">
+                ✅ Validar y Revertir
+              </button>
+              <button onclick="diagnosticarClaveTransaccion()" class="flex-1 bg-orange-500 text-white py-2 rounded-lg font-bold hover:bg-orange-600 transition">
+                🔍 Diagnosticar
+              </button>
+              <button onclick="cerrarModalClaveTransaccion()" class="flex-1 bg-gray-200 py-2 rounded-lg font-bold hover:bg-gray-300 transition">
+                Cancelar
+              </button>
+            </div>
+
+            <div id="diagnosticoArea" class="mt-4 hidden">
+              <div class="border-t pt-4">
+                <h4 class="font-bold text-md mb-2 text-orange-600">🔍 DIAGNÓSTICO DE VALIDACIÓN</h4>
+                <div id="diagnosticoContenido" class="bg-gray-50 rounded-lg p-3 text-xs font-mono overflow-auto max-h-96"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    const existingModal = document.getElementById('modalClaveTransaccion');
+    if (existingModal) existingModal.remove();
+    document.body.insertAdjacentHTML('beforeend', modalHtml);
+    document.getElementById('claveTransaccion')?.focus();
+  }
+
+  window.enviarClaveTransaccion = () => {
+    if (!transaccionIdActual) {
+      mostrarToast('Error: No hay transacción seleccionada', 'error');
+      return;
+    }
+
+    const btn = document.getElementById('btnEnviarClave');
+    const mensajeArea = document.getElementById('claveMensajeArea');
+
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner"></span> Enviando...';
+    }
+    if (mensajeArea) mensajeArea.innerHTML = '<p class="text-blue-600">📧 Enviando clave al correo...</p>';
+
+    callAppScriptPOST('solicitarClave', { idPedido: transaccionIdActual })
+      .then(() => {
+        if (btn) {
+          btn.disabled = false;
+          btn.innerHTML = '📧 ENVIAR CLAVE DE AUTORIZACIÓN';
+        }
+        if (mensajeArea) mensajeArea.innerHTML = '<p class="text-green-600">✅ Clave enviada. Revisa tu correo. Válida por 20 minutos.</p>';
+        mostrarToast('✅ Clave enviada al correo', 'success');
+
+        if (!document.getElementById('btnReenviarClave')) {
+          btn?.insertAdjacentHTML('afterend', `
+            <button id="btnReenviarClave" onclick="reenviarClaveTransaccion()"
+                    class="w-full bg-gray-600 text-white py-2 rounded-xl font-bold mt-2 text-sm hover:bg-gray-700 transition">
+              🔄 Reenviar Clave
+            </button>
+          `);
+        }
+      })
+      .catch(error => {
+        if (btn) {
+          btn.disabled = false;
+          btn.innerHTML = '📧 ENVIAR CLAVE DE AUTORIZACIÓN';
+        }
+        if (mensajeArea) mensajeArea.innerHTML = '<p class="text-red-600">❌ Error al enviar la clave</p>';
+        mostrarToast('Error al enviar: ' + error.message, 'error');
+      });
+  };
+
+  window.reenviarClaveTransaccion = () => {
+    if (!transaccionIdActual) return;
+    const mensajeArea = document.getElementById('claveMensajeArea');
+    if (mensajeArea) mensajeArea.innerHTML = '<p class="text-blue-600">📧 Reenviando clave...</p>';
+    
+    callAppScriptPOST('solicitarClave', { idPedido: transaccionIdActual })
+      .then(() => {
+        if (mensajeArea) mensajeArea.innerHTML = '<p class="text-green-600">✅ Clave reenviada. Revisa tu correo.</p>';
+        mostrarToast('✅ Clave reenviada', 'success');
+      })
+      .catch(error => {
+        mostrarToast('Error al reenviar: ' + error.message, 'error');
+      });
+  };
+
+  window.diagnosticarClaveTransaccion = () => {
+    const claveInput = document.getElementById('claveTransaccion');
+    const clave = claveInput?.value.trim().toUpperCase();
+    if (!clave || clave.length !== 6) {
+      mostrarToast('Ingresa una clave válida de 6 caracteres para diagnosticar', 'error');
+      return;
+    }
+    if (!transaccionIdActual) {
+      mostrarToast('Error: No hay transacción seleccionada', 'error');
+      return;
+    }
+
+    const btnDiagnostico = document.querySelector('#modalClaveTransaccion button:nth-child(2)');
+    if (btnDiagnostico) {
+      btnDiagnostico.disabled = true;
+      btnDiagnostico.innerHTML = '<span class="spinner"></span> Diagnosticando...';
+    }
+    mostrarToast('🔍 Ejecutando diagnóstico...', 'info');
+
+    callAppScriptPOST('diagnosticarClave', { idPedido: transaccionIdActual, clave: clave })
+      .then(diagnostico => {
+        if (btnDiagnostico) {
+          btnDiagnostico.disabled = false;
+          btnDiagnostico.innerHTML = '🔍 Diagnosticar';
+        }
+        mostrarAreaDiagnostico(diagnostico);
+      })
+      .catch(error => {
+        if (btnDiagnostico) {
+          btnDiagnostico.disabled = false;
+          btnDiagnostico.innerHTML = '🔍 Diagnosticar';
+        }
+        mostrarToast('Error al ejecutar diagnóstico: ' + error.message, 'error');
+      });
+  };
+
+  function mostrarAreaDiagnostico(diagnostico) {
+    const area = document.getElementById('diagnosticoArea');
+    const contenido = document.getElementById('diagnosticoContenido');
+    if (!area || !contenido) return;
+
+    let colorConclusion = 'text-gray-800';
+    if (diagnostico.conclusion?.includes('✅')) colorConclusion = 'text-green-600';
+    else if (diagnostico.conclusion?.includes('❌')) colorConclusion = 'text-red-600';
+    else if (diagnostico.conclusion?.includes('⏰')) colorConclusion = 'text-orange-600';
+
+    let html = `
+      <div class="mb-3 p-2 rounded ${diagnostico.conclusion?.includes('✅') ? 'bg-green-100' : 'bg-gray-100'}">
+        <p class="font-bold ${colorConclusion}">${diagnostico.conclusion || 'Sin conclusión'}</p>
+        <p class="text-gray-500 text-xs">ID Pedido: ${diagnostico.idPedido}</p>
+        <p class="text-gray-500 text-xs">Clave ingresada: "${diagnostico.claveIngresada}"</p>
+      </div>
+      <table class="w-full text-xs border-collapse">
+        <thead><tr class="bg-gray-200"><th class="p-1 border">Paso</th><th class="p-1 border">Prueba</th><th class="p-1 border">Resultado</th><th class="p-1 border">Detalles</th></tr></thead>
+        <tbody>
+    `;
+    for (const paso of diagnostico.pasos || []) {
+      let resultadoClass = '';
+      if (paso.resultado === 'COINCIDEN') resultadoClass = 'text-green-600 font-bold';
+      else if (paso.resultado === 'NO COINCIDEN') resultadoClass = 'text-red-600 font-bold';
+      else if (paso.resultado === 'ENCONTRADO') resultadoClass = 'text-green-600';
+      else if (paso.resultado === 'NO ENCONTRADO') resultadoClass = 'text-red-600';
+      else if (paso.resultado === 'EXPIRADA') resultadoClass = 'text-orange-600 font-bold';
+      else if (paso.resultado === 'VÁLIDA (dentro del tiempo)') resultadoClass = 'text-green-600';
+
+      html += `<tr><td class="p-1 border">${paso.paso}</td><td class="p-1 border font-medium">${paso.nombre}</td><td class="p-1 border ${resultadoClass}">${paso.resultado}</td><td class="p-1 border text-gray-600">${paso.detalles || ''}</td></tr>`;
+    }
+    html += `</tbody></table>`;
+    contenido.innerHTML = html;
+    area.classList.remove('hidden');
+    area.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+
+  window.validarClaveTransaccion = () => {
+    const claveInput = document.getElementById('claveTransaccion');
+    const clave = claveInput?.value.trim().toUpperCase();
+    if (!clave || clave.length !== 6) {
+      mostrarToast('Ingresa una clave válida de 6 caracteres', 'error');
+      return;
+    }
+    if (!transaccionIdActual) {
+      mostrarToast('Error: No hay transacción seleccionada', 'error');
+      return;
+    }
+
+    const btnValidar = document.querySelector('#modalClaveTransaccion button:first-of-type');
+    if (btnValidar) {
+      btnValidar.disabled = true;
+      btnValidar.innerHTML = '<span class="spinner"></span> Validando...';
+    }
+    mostrarToast('🔍 Validando clave y revirtiendo...', 'info');
+
+    setButtonLoading('revertirTransaccion', true);
+
+    callAppScriptPOST('revertirTransaccion', { idPedido: transaccionIdActual, clave: clave })
+      .then(() => {
+        setButtonLoading('revertirTransaccion', false);
+        if (btnValidar) {
+          btnValidar.disabled = false;
+          btnValidar.innerHTML = '✅ Validar y Revertir';
+        }
+
+        mostrarToast('✅ Transacción revertida a Pendiente correctamente', 'success');
+        cerrarModalClaveTransaccion();
+
+        const pedidoIndex = state.pedidos.findIndex(p => p.id_pedido === transaccionIdActual);
+        if (pedidoIndex !== -1) {
+          state.pedidos[pedidoIndex].estado = 'Pendiente';
+        }
+        state.activeTab = 'pedidos';
+        render();
+        refreshDataCompleta(true);
+      })
+      .catch(error => {
+        setButtonLoading('revertirTransaccion', false);
+        if (btnValidar) {
+          btnValidar.disabled = false;
+          btnValidar.innerHTML = '✅ Validar y Revertir';
+        }
+        mostrarToast('Error al revertir: ' + error.message, 'error');
+      });
+  };
+
+  window.cerrarModalClaveTransaccion = () => {
+    const modal = document.getElementById('modalClaveTransaccion');
+    if (modal) modal.remove();
+    transaccionIdActual = null;
+  };
+
+  // ==================== MODALES DE CONFIGURACIÓN ====================
+  function renderConfigNumeracionModal() {
+    return `
+      <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+        <div class="bg-white rounded-xl p-6 w-full max-w-md">
+          <h3 class="font-bold text-xl mb-4">⚙️ Cambiar Número Inicial de Facturación</h3>
+          <p class="text-sm text-gray-600 mb-4">Ingresa el número con el que quieres que empiece la PRÓXIMA factura:</p>
+          <input type="number" id="modalNuevoNumero" placeholder="Ej: 5000" class="w-full border border-gray-300 rounded-xl p-3 mb-4" value="${state.nuevoNumeroInicial}">
+          <div class="flex gap-3">
+            <button onclick="guardarNuevoNumeroInicial()" class="flex-1 bg-teal-600 text-white py-3 rounded-xl font-bold" ${state.loadingButtons.actualizarNumeracion ? 'disabled' : ''}>
+              ${state.loadingButtons.actualizarNumeracion ? '<span class="spinner"></span>Guardando...' : 'Guardar'}
+            </button>
+            <button onclick="cerrarModalConfiguracionNumeracion()" class="flex-1 bg-gray-200 py-3 rounded-xl font-bold">Cancelar</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  function abrirModalConfiguracionNumeracion() {
+    const input = document.getElementById('nuevoNumeroInicial');
+    if (input && input.value) state.nuevoNumeroInicial = input.value;
+    else state.nuevoNumeroInicial = '';
+    state.showConfigNumeracionModal = true;
+    render();
+  }
+
+  function cerrarModalConfiguracionNumeracion() {
+    state.showConfigNumeracionModal = false;
+    state.nuevoNumeroInicial = '';
+    render();
+  }
+
+  function guardarNuevoNumeroInicial() {
+    const nuevoNumero = parseInt(document.getElementById('modalNuevoNumero')?.value);
+    if (!nuevoNumero || nuevoNumero <= 0) {
+      mostrarToast('Ingresa un número válido', 'error');
+      return;
+    }
+    setButtonLoading('actualizarNumeracion', true);
+    
+    callAppScriptPOST('actualizarNumeroInicial', { nuevoNumero: nuevoNumero })
+      .then(() => {
+        setButtonLoading('actualizarNumeracion', false);
+        actualizarNumeracionLocalmente(nuevoNumero);
+        mostrarToast(`✅ Número actualizado a: ${nuevoNumero}`, 'success');
+        cerrarModalConfiguracionNumeracion();
+        render();
+        refreshDataCompleta(true);
+      })
+      .catch(error => {
+        setButtonLoading('actualizarNumeracion', false);
+        mostrarToast('Error al actualizar: ' + error.message, 'error');
+      });
+  }
+
+  // ==================== MODALES ====================
+  function renderCartModal() {
+    const cartTotal = state.cart.reduce((s, i) => s + ((i.unitPrice || i.product.precio) * i.quantity), 0);
+    return `<div class="fixed inset-0 bg-white z-50 flex flex-col"><div class="p-4 border-b flex justify-between items-center"><h2 class="font-bold text-lg">🛒 Carrito</h2><button onclick="closeCart()" class="text-2xl text-gray-400">✕</button></div><div class="flex-1 overflow-auto p-4 space-y-3">${state.cart.map((item, idx) => { const currentPrice = item.unitPrice || item.product.precio; return `<div class="flex justify-between items-center border-b pb-3"><div class="flex-1"><p class="font-bold">${item.product.nombre}</p><div class="flex gap-2 mt-1 items-center flex-wrap"><input type="number" id="price_${idx}" value="${currentPrice}" class="w-28 text-sm border rounded px-2 py-1" onchange="updateCartPrice(${idx}, this.value)" step="100" onfocus="this.select()"><span class="text-sm text-gray-500">×</span><span class="font-bold">${item.quantity}</span><button onclick="openEditCart(${idx})" class="text-xs text-blue-500 ml-2">Editar cantidad</button></div></div><div class="text-right"><p class="font-bold">$${(item.quantity * currentPrice).toLocaleString()}</p><button onclick="removeFromCart(${idx})" class="text-xs text-red-500 mt-1">Eliminar</button></div></div>`; }).join('')}</div><div class="p-4 border-t"><div class="flex justify-between mb-4"><span class="font-bold text-lg">Total</span><span class="text-2xl font-bold text-teal-600">$${cartTotal.toLocaleString()}</span></div><button onclick="openPayment()" class="w-full bg-teal-600 text-white py-3 rounded-xl font-bold text-lg">Continuar →</button></div></div>`;
+  }
+
+  function renderPaymentModal() {
+    const cartTotal = state.cart.reduce((s, i) => s + ((i.unitPrice || i.product.precio) * i.quantity), 0);
+    const proximaFacturaLocal = calcularSiguienteNumeroFacturaLocal();
+    return `<div class="fixed inset-0 bg-white z-50 flex flex-col"><div class="p-4 border-b flex justify-between items-center"><h2 class="font-bold text-lg">💵 Finalizar Venta</h2><button onclick="closePayment()" class="text-2xl text-gray-400">✕</button></div><div class="flex-1 overflow-auto p-4"><div class="text-center mb-6"><p class="text-gray-500 text-sm">Total a pagar</p><p class="text-4xl font-bold text-teal-600">$${cartTotal.toLocaleString()}</p><p class="text-xs text-gray-400 mt-2">Factura #: <strong class="text-amber-600">Supuesto(${proximaFacturaLocal})</strong> <span class="text-amber-500 text-xs">⏳ provisional</span></p></div><div class="mb-4"><label class="text-sm font-bold block mb-1">📝 Comentarios</label><textarea id="observacionFinal" rows="3" class="w-full border border-gray-300 rounded-xl p-3 bg-white" placeholder="Notas de la venta...">${state.observacion}</textarea></div></div><div class="p-4 border-t"><button onclick="completeSale()" class="w-full bg-green-500 text-white py-3 rounded-xl font-bold text-lg" ${state.loadingButtons.registrarVenta ? 'disabled' : ''}>${state.loadingButtons.registrarVenta ? '<span class="spinner"></span>Procesando...' : '✓ COMPLETAR VENTA'}</button></div></div>`;
+  }
+
+  function renderQuantityModal() {
+    const product = state.selectedProduct;
+    return `<div class="fixed inset-0 bg-white z-50 flex flex-col"><div class="p-4 border-b flex justify-between items-center"><h2 class="font-bold text-lg">${product?.nombre}</h2><button onclick="closeQuantityModal()" class="text-2xl text-gray-400">✕</button></div><div class="flex-1 flex items-center justify-center"><div class="text-7xl font-bold text-teal-600 border-b-4 border-teal-600 pb-2 px-8">${state.numValue}</div></div><div class="p-4 grid grid-cols-3 gap-2 max-w-md mx-auto w-full">${[1,2,3,4,5,6,7,8,9,',',0,'del'].map(k => `<button onclick="handleKeypad('${k}')" class="h-16 text-2xl font-bold bg-gray-100 rounded-xl active:bg-gray-200">${k === 'del' ? '⌫' : k}</button>`).join('')}</div><div class="p-4"><button onclick="addToCartFromModal()" class="w-full bg-teal-600 text-white py-3 rounded-xl font-bold text-lg">Agregar al carrito</button></div></div>`;
+  }
+
+  function renderEditCartModal() {
+    const item = state.cart[state.editingCartIndex];
+    if (!item) return '';
+    return `<div class="fixed inset-0 bg-white z-50 flex flex-col"><div class="p-4 border-b flex justify-between items-center"><h2 class="font-bold">Editar ${item.product.nombre}</h2><button onclick="closeEditCart()" class="text-2xl text-gray-400">✕</button></div><div class="p-4"><label class="font-bold block mb-2">Cantidad:</label><div class="text-6xl font-bold text-teal-600 border-b-4 border-teal-600 pb-2 px-8 text-center">${state.editQuantityValue}</div></div><div class="p-4 grid grid-cols-3 gap-2">${[1,2,3,4,5,6,7,8,9,',',0,'del'].map(k => `<button onclick="handleEditKeypad('${k}')" class="h-16 text-2xl font-bold bg-gray-100 rounded-xl">${k === 'del' ? '⌫' : k}</button>`).join('')}</div><div class="p-4"><button onclick="saveEditCart()" class="w-full bg-teal-600 text-white py-3 rounded-xl font-bold">Guardar</button></div></div>`;
+  }
+
+  function renderOrderDetailModal() {
+    const order = state.pedidos.find(p => p.id_pedido === state.selectedOrderId);
+    const detalles = state.detalles_pedido.filter(d => d.id_pedido === state.selectedOrderId);
+    if (!order) return '';
+    const facturaNumero = getNumeroFactura(order);
+    const esProvisional = typeof order.numero_factura === 'string' && order.numero_factura.includes('Supuesto');
+    return `<div class="fixed inset-0 bg-white z-50 flex flex-col"><div class="p-4 border-b flex justify-between items-center"><h2 class="font-bold">Factura #${facturaNumero} ${esProvisional ? '<span class="text-amber-500 text-xs">⏳ Provisional</span>' : ''}</h2><button onclick="closeOrderDetail()" class="text-2xl">✕</button></div><div class="flex-1 overflow-auto p-4"><div class="bg-gray-50 p-4 rounded-xl mb-4"><p class="text-gray-500 text-sm">Cliente</p><p class="font-bold">${order.nombre_cliente}</p><p class="text-gray-500 text-sm mt-2">Total</p><p class="text-2xl font-bold text-teal-600">$${Number(order.total).toLocaleString()}</p><p class="text-gray-500 text-sm mt-2">Productos</p><p class="font-bold">${order.total_productos || 0} líneas</p><p class="text-gray-500 text-sm mt-2">Estado</p><span class="inline-block px-3 py-1 rounded-full text-xs ${order.estado === 'Pendiente' ? 'bg-yellow-100 text-yellow-700' : 'bg-green-100 text-green-700'}">${order.estado}</span><p class="text-gray-500 text-sm mt-2">Fecha y Hora</p><p>${formatFecha(order.fecha)}</p><p class="text-gray-500 text-sm mt-2">Vendedor</p><p>${order.nombre_vendedor || 'Sin vendedor'}</p><p class="text-gray-500 text-sm mt-2">ID Interno</p><p class="text-xs font-mono">${order.id_pedido}</p>${order.observacion ? `<p class="text-gray-500 text-sm mt-2">Comentarios</p><p class="text-sm">${order.observacion}</p>` : ''}</div><h3 class="font-bold mb-2">Productos</h3>${detalles.map(d => `<div class="flex justify-between py-2 border-b"><div><p class="font-medium">${d.nombre_producto}</p><p class="text-xs text-gray-500">${d.cantidad} x $${Number(d.precio_unitario).toLocaleString()}</p></div><p class="font-bold">$${Number(d.subtotal).toLocaleString()}</p></div>`).join('')}</div><div class="p-4 border-t flex gap-2">
+      <button onclick="imprimirPedido('${order.id_pedido}')" class="flex-1 bg-blue-500 text-white py-3 rounded-xl font-bold">🖨️ Imprimir</button>
+      ${order.estado === 'Pendiente' && !esProvisional ? `
+        <button onclick="confirmarPedido('${order.id_pedido}')" class="flex-1 bg-green-500 text-white py-3 rounded-xl font-bold" ${state.loadingButtons.confirmarPedido ? 'disabled' : ''}>
+          ${state.loadingButtons.confirmarPedido ? '<span class="spinner"></span>Confirmando...' : '✅ Confirmar'}
+        </button>
+      ` : ''}
+      <button onclick="closeOrderDetail()" class="flex-1 bg-gray-200 py-3 rounded-xl font-bold">Cerrar</button>
+    </div></div>`;
+  }
+
+  function renderPrintModal() {
+    if (!state.lastOrderData) return '';
+    const { order, detalles } = state.lastOrderData;
+    const facturaNumero = getNumeroFactura(order) || order.id_pedido;
+    return `<div class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"><div class="bg-white rounded-xl max-w-md w-full max-h-[90vh] overflow-auto"><div class="print-area p-6"><div class="text-center border-b pb-4 mb-4"><h2 class="font-bold text-xl">🐟 Cotilpez S.A.S.</h2><p class="text-sm text-gray-500">NIT: 900.000.000-0</p><p class="text-sm text-gray-500">Factura de Venta</p><p class="text-xs text-gray-400 mt-2">Factura #${facturaNumero}</p><p class="text-xs text-gray-400">${order.fecha}</p></div><div class="mb-4"><p class="text-sm font-bold">Cliente:</p><p class="text-sm">${order.nombre_cliente}</p><p class="text-sm font-bold mt-2">Vendedor:</p><p class="text-sm">${order.nombre_vendedor || 'Sin vendedor'}</p></div><table class="w-full text-sm mb-4"><thead class="border-b"><tr><th class="text-left py-2">Producto</th><th class="text-right">Cant</th><th class="text-right">Precio</th><th class="text-right">Subtotal</th></tr></thead><tbody>${detalles.map(d => `<tr class="border-b"><td class="py-2">${d.nombre_producto}</td><td class="text-right">${d.cantidad}</td><td class="text-right">$${Number(d.precio_unitario).toLocaleString()}</td><td class="text-right">$${Number(d.subtotal).toLocaleString()}</td></tr>`).join('')}</tbody><tfoot class="border-t"><tr><td colspan="3" class="pt-2 text-right font-bold">Total:</td><td class="pt-2 text-right font-bold">$${Number(order.total).toLocaleString()}</td></tr></tfoot></table><div class="text-center text-xs text-gray-400 border-t pt-4 mt-4"><p>¡Gracias por su compra!</p></div></div><div class="p-4 border-t flex gap-2"><button onclick="window.print(); closePrintModal();" class="flex-1 bg-teal-600 text-white py-2 rounded-lg">🖨️ Imprimir</button><button onclick="closePrintModal()" class="flex-1 bg-gray-200 py-2 rounded-lg">Cerrar</button></div></div></div>`;
+  }
+
+  function renderClientHistoryModal() {
+    const cliente = state.selectedClientForHistory;
+    const pedidosCliente = state.pedidos.filter(p => String(p.id_cliente) === String(cliente?.id));
+    return `<div class="fixed inset-0 bg-white z-50 flex flex-col"><div class="p-4 border-b flex justify-between items-center"><h2 class="font-bold">📜 Historial: ${cliente?.nombre}</h2><button onclick="closeClientHistory()" class="text-2xl">✕</button></div><div class="flex-1 overflow-auto p-4">${Number(cliente?.saldo_por_cobrar) > 0 ? `<div class="bg-orange-50 p-4 rounded-xl mb-4 text-center border"><p class="text-orange-700 font-bold">💰 Saldo pendiente: $${Number(cliente.saldo_por_cobrar).toLocaleString()}</p></div>` : ''}${pedidosCliente.length === 0 ? '<p class="text-gray-400 text-center py-8">Sin compras registradas</p>' : pedidosCliente.map(p => `<div class="bg-gray-50 p-3 rounded-xl mb-2"><div class="flex justify-between"><p class="font-bold">Factura #${getNumeroFactura(p)}</p><p class="text-sm">${formatFecha(p.fecha)}</p></div><div class="flex justify-between mt-1"><p>Total</p><p class="font-bold">$${Number(p.total).toLocaleString()}</p></div><p class="text-xs text-gray-500">Estado: ${p.estado}</p><p class="text-xs text-gray-500">Vendedor: ${p.nombre_vendedor || 'Sin vendedor'}</p></div>`).join('')}</div><div class="p-4 border-t"><button onclick="closeClientHistory()" class="w-full bg-gray-200 py-3 rounded-xl font-bold">Cerrar</button></div></div>`;
+  }
+
+  function renderNewClientModal() {
+    return `<div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"><div class="bg-white rounded-xl p-6 w-full max-w-md"><h3 class="font-bold text-xl mb-4">➕ Nuevo Cliente</h3><input type="text" id="newClientName" placeholder="Nombre completo" class="w-full border border-gray-300 rounded-xl p-3 mb-3" autocomplete="off"><input type="tel" id="newClientPhone" placeholder="Teléfono" class="w-full border border-gray-300 rounded-xl p-3 mb-4" autocomplete="off"><div class="flex gap-3"><button onclick="saveNewClient()" class="flex-1 bg-teal-600 text-white py-3 rounded-xl font-bold">Guardar</button><button onclick="closeNewClientModal()" class="flex-1 bg-gray-200 py-3 rounded-xl font-bold">Cancelar</button></div></div></div>`;
+  }
+
+  function renderEditOrderModal() {
+    if (!state.editingOrder) return '';
+    const cartTotal = state.editCart.reduce((s, i) => s + ((i.unitPrice || i.product.precio) * i.quantity), 0);
+    const facturaNumero = getNumeroFactura(state.editingOrder) || state.editingOrder.id_pedido;
+    return `<div class="fixed inset-0 bg-white z-50 flex flex-col"><div class="p-4 border-b flex justify-between items-center bg-teal-600 text-white sticky top-0"><h2 class="font-bold text-lg">✏️ Editando Pedido - Factura #${facturaNumero}</h2><button onclick="closeEditOrderModal()" class="text-2xl">✕</button></div><div class="flex-1 overflow-auto p-4 space-y-4"><div class="bg-gray-50 rounded-xl p-3 border"><label class="text-sm font-bold text-gray-700 block mb-1">👤 Cliente</label><div class="relative"><input type="text" id="editClientSearch" placeholder="Buscar cliente por nombre..." class="w-full border border-gray-300 rounded-xl p-3 bg-white" autocomplete="off" value="${state.editSelectedClient?.nombre || state.editingOrder.nombre_cliente || ''}" onfocus="this.select()"><div id="editClientDropdown" class="search-dropdown" style="display: none;"></div></div><button onclick="openNewClientModalFromEdit()" class="text-xs text-teal-600 mt-2">+ Crear nuevo cliente</button></div><div class="bg-gray-50 rounded-xl p-3 border"><label class="text-sm font-bold text-gray-700 block mb-1">📝 Comentarios</label><textarea id="editObservacionOrder" rows="2" placeholder="Notas adicionales..." class="w-full border border-gray-300 rounded-xl p-3 bg-white" onfocus="this.select()">${state.editObservacion}</textarea></div><div class="bg-gray-50 rounded-xl p-3 border"><label class="text-sm font-bold text-gray-700 block mb-1">➕ Agregar producto</label><div class="relative"><input type="text" id="editProductSearch" placeholder="🔍 Buscar por nombre o código..." class="w-full border border-gray-300 rounded-xl p-3 bg-white" autocomplete="off" onfocus="this.select()"><div id="editProductDropdown" class="search-dropdown" style="display: none;"></div></div></div><div><h3 class="font-bold text-md mb-2 flex items-center gap-2">🛒 Productos en el pedido <span class="text-xs text-gray-400">(${state.editCart.length})</span></h3>${state.editCart.length === 0 ? '<p class="text-center text-gray-400 py-6 bg-gray-50 rounded-xl">No hay productos en este pedido</p>' : state.editCart.map((item, idx) => { const currentPrice = item.unitPrice || item.product.precio; return `<div class="bg-white rounded-xl p-3 shadow-sm border mb-2"><div class="flex justify-between items-start"><div class="flex-1"><p class="font-bold">${item.product.nombre}</p><p class="text-xs text-gray-400">Cód: ${item.product.código}</p><div class="flex flex-wrap gap-2 mt-2 items-center"><div class="flex items-center gap-1"><span class="text-xs text-gray-500">Precio:</span><input type="number" value="${currentPrice}" class="w-24 text-sm border rounded-lg px-2 py-1 text-right" onchange="updateEditCartPrice(${idx}, this.value)" step="100" onfocus="this.select()"></div><div class="flex items-center gap-1"><span class="text-xs text-gray-500">Cant:</span><span class="font-bold min-w-[40px] text-center">${item.quantity}</span><button onclick="openEditQuantityModal(${idx})" class="text-xs bg-blue-100 hover:bg-blue-200 px-2 py-1 rounded-lg transition">✏️ Editar</button></div><button onclick="removeFromEditCart(${idx})" class="text-xs bg-red-100 hover:bg-red-200 px-2 py-1 rounded-lg text-red-600 transition">🗑️ Eliminar</button></div></div><div class="text-right"><p class="font-bold text-teal-600">$${(item.quantity * currentPrice).toLocaleString()}</p></div></div></div>`; }).join('')}</div></div><div class="p-4 border-t bg-white sticky bottom-0 shadow-lg"><div class="flex justify-between items-center mb-3"><span class="font-bold text-lg">Total del pedido:</span><span class="text-2xl font-bold text-teal-600">$${cartTotal.toLocaleString()}</span></div><div class="flex gap-3"><button onclick="eliminarPedidoDesdeEdicion('${state.editingOrder.id_pedido}')" class="flex-1 bg-red-600 hover:bg-red-700 text-white py-3 rounded-xl font-bold text-lg transition" ${state.loadingButtons.eliminarPedido ? 'disabled' : ''}>${state.loadingButtons.eliminarPedido ? '<span class="spinner"></span>Eliminando...' : '🗑️ Eliminar Pedido'}</button><button onclick="guardarEdicionPedido()" class="flex-1 bg-green-600 hover:bg-green-700 text-white py-3 rounded-xl font-bold text-lg transition" ${state.loadingButtons.editarPedido ? 'disabled' : ''}>${state.loadingButtons.editarPedido ? '<span class="spinner"></span>Guardando...' : '💾 Guardar Cambios'}</button><button onclick="closeEditOrderModal()" class="flex-1 bg-gray-200 hover:bg-gray-300 py-3 rounded-xl font-bold text-lg transition">Cancelar</button></div></div></div>`;
+  }
+
+  function renderEditQuantityModal() {
+    return `<div class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"><div class="bg-white rounded-2xl max-w-md w-full"><div class="p-4 border-b flex justify-between items-center"><h2 class="font-bold text-lg">✏️ Editar cantidad</h2><button onclick="closeEditQuantityModal()" class="text-2xl text-gray-400">✕</button></div><div class="p-6"><div class="text-center mb-6"><div class="text-7xl font-bold text-teal-600 border-b-4 border-teal-600 pb-2 inline-block px-8">${state.editNumValue}</div></div><div class="grid grid-cols-3 gap-2 max-w-xs mx-auto">${[1,2,3,4,5,6,7,8,9,'.',0,'del'].map(k => `<button onclick="handleEditQuantityKeypad('${k}')" class="h-16 text-2xl font-bold bg-gray-100 rounded-xl active:bg-gray-200 hover:bg-gray-200 transition">${k === 'del' ? '⌫' : k}</button>`).join('')}</div><button onclick="saveEditQuantity()" class="w-full bg-teal-600 text-white py-3 rounded-xl font-bold text-lg mt-6">✓ Guardar cantidad</button></div></div></div>`;
+  }
+
+  // ==================== INICIALIZACIÓN ====================
+  refreshDataCompleta();
+  iniciarSincronizacionAutomatica();
+</script>
+</body>
+</html>
