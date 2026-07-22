@@ -139,7 +139,7 @@
 
 <script>
   // ==================== CONFIGURACIÓN ====================
-  // ✅ NUEVA URL DE APPS SCRIPT (PUBLICADA)
+  // ✅ URL DE APPS SCRIPT - CONFIRMADA Y FUNCIONANDO
   const URL_APPSCRIPT = 'https://script.google.com/macros/s/AKfycbx7MAclzbjOR3CYdt2CEP6bfLL_toYgdhd-2rGLKJIlUCYyn24MrFNr-np6r0n6EedW_Q/exec';
   const URL_SISTEMA_ABONOS = 'https://script.google.com/macros/s/AKfycbw3eOunDhSOCB-WPWY0JYmfYtd2vyhDWanOgcaELx_CTQzNxjrRCoOqYV7lgETZ2fqOMg/exec';
   const URL_IMPRESORA_BLUETOOTH = 'https://santiagot4.github.io/5--imprimir/';
@@ -187,8 +187,11 @@
     });
   }
   
-  // ===== Para ESCRIBIR datos (POST) =====
-  // ✅ CAMBIADO: mode: 'cors' para leer respuesta, manteniendo text/plain
+  // ===== Para ESCRIBIR datos (POST) - VERSIÓN DEFINITIVA =====
+  // ✅ mode: 'cors' - Permite leer la respuesta
+  // ✅ text/plain - Evita preflight (petición simple)
+  // ✅ JSON.stringify() - Traduce objeto a texto
+  // ✅ JSON.parse() - Traduce texto a objeto
   function callAppScriptPOST(action, payload = {}) {
     return new Promise((resolve, reject) => {
       // ===== PASO 1: CONSTRUIR OBJETO =====
@@ -199,23 +202,21 @@
       
       console.log('📤 Enviando POST:', body);
       
-      // ===== PASO 3: ENVIAR CON mode: 'cors' =====
-      // ✅ mode: 'cors' permite leer la respuesta
-      // ✅ Content-Type: 'text/plain' mantiene petición simple (sin preflight)
+      // ===== PASO 3: ENVIAR CON mode: 'cors' y text/plain =====
       fetch(URL_APPSCRIPT, {
         method: 'POST',
-        mode: 'cors',  // ← CAMBIADO: 'cors' en lugar de 'no-cors'
+        mode: 'cors',          // ← Permite leer la respuesta
         headers: {
-          'Content-Type': 'text/plain'  // ← Se mantiene text/plain para petición simple
+          'Content-Type': 'text/plain'  // ← Evita preflight
         },
-        body: body  // ← Texto plano
+        body: body
       })
       .then(response => {
         console.log('📡 Status:', response.status);
         if (!response.ok) {
           throw new Error('Error HTTP: ' + response.status);
         }
-        return response.text();  // ← LEER COMO TEXTO
+        return response.text();  // ← Leer como texto
       })
       .then(text => {
         console.log('📥 Recibido (POST):', text);
