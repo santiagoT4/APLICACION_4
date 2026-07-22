@@ -188,6 +188,7 @@
   }
   
   // ===== Para ESCRIBIR datos (POST) =====
+  // ✅ CAMBIADO: mode: 'cors' para leer respuesta, manteniendo text/plain
   function callAppScriptPOST(action, payload = {}) {
     return new Promise((resolve, reject) => {
       // ===== PASO 1: CONSTRUIR OBJETO =====
@@ -198,14 +199,14 @@
       
       console.log('📤 Enviando POST:', body);
       
-      // ===== PASO 3: ENVIAR POR EL CANAL (TEXTO PLANO) =====
-      // ✅ Usamos 'cors' para poder leer la respuesta
-      // ⚠️ Apps Script debe tener doOptions() para manejar el preflight
+      // ===== PASO 3: ENVIAR CON mode: 'cors' =====
+      // ✅ mode: 'cors' permite leer la respuesta
+      // ✅ Content-Type: 'text/plain' mantiene petición simple (sin preflight)
       fetch(URL_APPSCRIPT, {
         method: 'POST',
-        mode: 'cors',  // ← CAMBIADO: 'cors' para leer respuesta
+        mode: 'cors',  // ← CAMBIADO: 'cors' en lugar de 'no-cors'
         headers: {
-          'Content-Type': 'text/plain'  // ← CLAVE: formato neutro
+          'Content-Type': 'text/plain'  // ← Se mantiene text/plain para petición simple
         },
         body: body  // ← Texto plano
       })
