@@ -718,13 +718,12 @@
         codigo_alternativo: d.codigo_alternativo || ''
       }));
       
-      return callAppScriptPOST('registrarVenta', {
-        payload: JSON.stringify({
+      // ===== AHORA (CORRECTO) =====
+      callAppScriptPOST('registrarVenta', {
           order: order,
           details: details,
           idPedidoTemporal: pedido.id_pedido,
           numeroProvisional: parseInt(pedido.numero_factura.match(/\d+/)?.[0] || 0)
-        })
       })
       .then((data) => {
         sincronizados++;
@@ -930,13 +929,12 @@
     
     mostrarToast('🔄 Reintentando sincronizar...', 'info');
     
+    // ===== AHORA (CORRECTO) =====
     callAppScriptPOST('registrarVenta', {
-      payload: JSON.stringify({
         order: order,
         details: details,
         idPedidoTemporal: pedido.id_pedido,
         numeroProvisional: parseInt(pedido.numero_factura.match(/\d+/)?.[0] || 0)
-      })
     })
     .then((data) => {
       pedido.sincronizado = true;
